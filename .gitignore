@@ -1,5 +1,7 @@
 *_templ.go
 *.db
+*.db-wal
+*.db-shm
 .env
 *.mkv
-work
+/work/

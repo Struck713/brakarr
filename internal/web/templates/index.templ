@@ -19,13 +19,13 @@ templ Index() {
 				<h1 class="h3 mb-4">Brakarr</h1>
 				<section class="mb-4" aria-labelledby="active-job-heading">
 					<h2 id="active-job-heading" class="h5 mb-3">Active job</h2>
-					<div hx-get="/job" hx-trigger="load, every 2s">
+					<div hx-get="/jobs" hx-trigger="load, every 2s">
 						<p class="text-muted">Loading active job...</p>
 					</div>
 				</section>
 				<section aria-labelledby="media-heading">
 					<h2 id="media-heading" class="h5 mb-3">Media</h2>
-					<div hx-get="/crawler" hx-trigger="load, every 5s">
+					<div hx-get="/media" hx-trigger="load" hx-swap="outerHTML">
 						<p class="text-muted">Loading media...</p>
 					</div>
 				</section>

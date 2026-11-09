@@ -3,7 +3,6 @@ package templates
 import (
 	"encoding/hex"
 	"fmt"
-	"strconv"
 
 	"github.com/Struck713/brakarr/internal/media"
 )
@@ -17,48 +16,95 @@ func shortHash(hash []byte) string {
 	return hex.EncodeToString(hash)
 }
 
-templ Table(items []media.Media) {
-	if len(items) == 0 {
-		<p class="text-muted">No media logged yet.</p>
-	} else {
-		<div class="table-responsive bg-white border rounded">
-			<table class="table table-hover align-middle mb-0">
-				<thead>
+func panelURL(page int) string {
+	return fmt.Sprintf("/media?page=%d", page)
+}
+
+func retryURL(hash []byte, page int) string {
+	return fmt.Sprintf("/media/%s/retry?page=%d", hex.EncodeToString(hash), page)
+}
+
+// MediaPanel is a self-refreshing fragment that keeps the current page across polls.
+templ MediaPanel(items []media.Media, page, pages, total int) {
+	<div id="media-panel" hx-get={ panelURL(page) } hx-trigger="every 5s" hx-swap="outerHTML">
+		if total == 0 {
+			<p class="text-muted">No media logged yet.</p>
+		} else {
+			@table(items, page)
+			if pages > 1 {
+				<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Media pages">
+					<button
+						class="btn btn-sm btn-outline-secondary"
+						hx-get={ panelURL(page - 1) }
+						hx-target="#media-panel"
+						hx-swap="outerHTML"
+						disabled?={ page <= 1 }
+					>Previous</button>
+					<small class="text-muted">Page { fmt.Sprint(page) } of { fmt.Sprint(pages) } · { fmt.Sprint(total) } files</small>
+					<button
+						class="btn btn-sm btn-outline-secondary"
+						hx-get={ panelURL(page + 1) }
+						hx-target="#media-panel"
+						hx-swap="outerHTML"
+						disabled?={ page >= pages }
+					>Next</button>
+				</nav>
+			}
+		}
+	</div>
+}
+
+templ table(items []media.Media, page int) {
+	<div class="table-responsive bg-white border rounded">
+		<table class="table table-hover align-middle mb-0">
+			<thead>
+				<tr>
+					<th scope="col">Hash</th>
+					<th scope="col">Title</th>
+					<th scope="col">Format</th>
+					<th scope="col">Bit Depth</th>
+					<th scope="col">Size</th>
+					<th scope="col">Status</th>
+					<th scope="col"></th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, item := range items {
 					<tr>
-						<th scope="col">#</th>
-						<th scope="col">Hash</th>
-						<th scope="col">Title</th>
-						<th scope="col">Format</th>
-						<th scope="col">Bit Depth</th>
-						<th scope="col">Status</th>
+						<td><code title={ hex.EncodeToString(item.Hash) }>{ shortHash(item.Hash) }</code></td>
+						<td>{ item.Name }</td>
+						<td>{ item.Format }</td>
+						<td>{ item.BitDepth }</td>
+						<td>{ formatBytes(item.Size) }</td>
+						<td>@statusBadge(item)</td>
+						<td class="text-end">
+							if item.Status == media.StatusFailed {
+								<button
+									class="btn btn-sm btn-outline-primary"
+									hx-post={ retryURL(item.Hash, page) }
+									hx-target="#media-panel"
+									hx-swap="outerHTML"
+								>Retry</button>
+							}
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					for index, item := range items {
-						<tr>
-							<th scope="row">{ strconv.Itoa(index + 1) }</th>
-							<td><code title={ hex.EncodeToString(item.Hash) }>{ shortHash(item.Hash) }</code></td>
-							<td>{ item.Name }</td>
-							<td>{ item.Format }</td>
-							<td>{ fmt.Sprint(item.BitDepth) }</td>
-							<td>
-                                switch item.Status {
-                                case media.StatusFailed:
-                                    <span class="badge bg-error">Failed</span>
-                                case media.StatusRunning:
-                                    <span class="badge bg-warning">Running</span>
-                                case media.StatusSkipped:
-                                    <span class="badge bg-warning">Skipped</span>
-                                case media.StatusComplete:
-                                    <span class="badge bg-warning">Skipped</span>
-                                default:
-                                    <span class="badge bg-gray">Pending</span>
-                                }
-							</td>
-						</tr>
-					}
-				</tbody>
-			</table>
-		</div>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+templ statusBadge(item media.Media) {
+	switch item.Status {
+		case media.StatusFailed:
+			<span class="badge bg-danger" title={ item.Error }>Failed</span>
+		case media.StatusRunning:
+			<span class="badge bg-primary">Running</span>
+		case media.StatusSkipped:
+			<span class="badge bg-secondary" title={ item.Error }>Skipped</span>
+		case media.StatusComplete:
+			<span class="badge bg-success">Complete</span>
+		default:
+			<span class="badge bg-warning text-dark">Pending</span>
 	}
 }

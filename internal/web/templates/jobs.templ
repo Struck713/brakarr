@@ -6,7 +6,6 @@ import "github.com/Struck713/brakarr/internal/transcode"
 import "github.com/Struck713/brakarr/internal/media"
 import "strconv"
 
-
 func formatBytes(size int64) string {
 	const unit = 1024
 
@@ -37,38 +36,32 @@ templ ActiveJobs(jobs []*pool.Job) {
 }
 
 templ activeJob(media *media.Media, status *transcode.Progress) {
-	if media == nil {
-		<div class="card">
-			<div class="card-body text-muted">No active job.</div>
-		</div>
-	} else {
-		<div class="card">
-			<div class="card-body">
-				<div class="d-flex justify-content-between align-items-start gap-3">
-					<div>
-						<h3 class="h6 mb-1">{ media.Name }</h3>
-						<small class="text-muted">{ media.Format } · { fmt.Sprint(media.BitDepth) }-bit</small>
-					</div>
-					@jobBadge(status)
+	<div class="card">
+		<div class="card-body">
+			<div class="d-flex justify-content-between align-items-start gap-3">
+				<div>
+					<h3 class="h6 mb-1">{ media.Name }</h3>
+					<small class="text-muted">{ media.Format } · { media.BitDepth }-bit</small>
 				</div>
-				if status != nil {
-					if media.Duration > 0 {
-						@jobProgress(status.Percent(media.Duration))
-					}
-					<dl class="row row-cols-2 row-cols-md-4 g-3 mt-2 mb-0">
-						@stat("Encoded time", status.OutTime)
-						@stat("Speed", status.Speed)
-						@stat("FPS", fmt.Sprintf("%.1f", status.Fps))
-						@stat("Frame", strconv.FormatInt(status.Frame, 10))
-						@stat("Bitrate", status.Bitrate)
-						@stat("Output size", formatBytes(status.TotalSize))
-						@stat("Duplicate frames", strconv.FormatInt(status.DupFrames, 10))
-						@stat("Dropped frames", strconv.FormatInt(status.DropFrames, 10))
-					</dl>
-				}
+				@jobBadge(status)
 			</div>
+			if status != nil {
+				if media.Duration > 0 {
+					@jobProgress(status.Percent(media.Duration))
+				}
+				<dl class="row row-cols-2 row-cols-md-4 g-3 mt-2 mb-0">
+					@stat("Encoded time", status.OutTime)
+					@stat("Speed", status.Speed)
+					@stat("FPS", fmt.Sprintf("%.1f", status.Fps))
+					@stat("Frame", strconv.FormatInt(status.Frame, 10))
+					@stat("Bitrate", status.Bitrate)
+					@stat("Output size", formatBytes(status.TotalSize))
+					@stat("Duplicate frames", strconv.FormatInt(status.DupFrames, 10))
+					@stat("Dropped frames", strconv.FormatInt(status.DropFrames, 10))
+				</dl>
+			}
 		</div>
-	}
+	</div>
 }
 
 templ jobBadge(status *transcode.Progress) {
