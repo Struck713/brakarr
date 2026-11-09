@@ -1,9 +1,12 @@
 package web
 
 import (
+	"cmp"
 	"context"
+	"embed"
 	"encoding/hex"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/Struck713/brakarr/internal/media"
@@ -15,6 +18,9 @@ import (
 )
 
 const pageSize = 50
+
+//go:embed static
+var staticFiles embed.FS
 
 type Store interface {
 	List(ctx context.Context, limit, offset int) ([]media.Media, error)
@@ -43,8 +49,18 @@ func (w *Web) Routes() *echo.Echo {
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
 
+	e.StaticFS("/static", echo.MustSubFS(staticFiles, "static"))
+
 	e.GET("/", func(c *echo.Context) error {
-		return Render(c, http.StatusOK, templates.Index())
+		list, err := w.mediaList(c, pageParam(c))
+		if err != nil {
+			return err
+		}
+		return Render(c, http.StatusOK, templates.LibraryPage(list))
+	})
+
+	e.GET("/activity", func(c *echo.Context) error {
+		return Render(c, http.StatusOK, templates.ActivityPage(w.activeJobs()))
 	})
 
 	e.GET("/media", func(c *echo.Context) error {
@@ -64,7 +80,7 @@ func (w *Web) Routes() *echo.Echo {
 	})
 
 	e.GET("/jobs", func(c *echo.Context) error {
-		return Render(c, http.StatusOK, templates.ActiveJobs(w.pool.Jobs()))
+		return Render(c, http.StatusOK, templates.ActiveJobs(w.activeJobs()))
 	})
 
 	return e
@@ -74,21 +90,39 @@ func (w *Web) Run(ctx context.Context, addr string) error {
 	return echo.StartConfig{Address: addr}.Start(ctx, w.Routes())
 }
 
-func (w *Web) mediaPanel(c *echo.Context, page int) error {
+func (w *Web) mediaList(c *echo.Context, page int) (templates.MediaList, error) {
 	ctx := c.Request().Context()
 
 	total, err := w.db.Count(ctx)
 	if err != nil {
-		return err
+		return templates.MediaList{}, err
 	}
 	pages := max((total+pageSize-1)/pageSize, 1)
 	page = min(max(page, 1), pages)
 
 	items, err := w.db.List(ctx, pageSize, (page-1)*pageSize)
 	if err != nil {
+		return templates.MediaList{}, err
+	}
+	return templates.MediaList{Items: items, Page: page, Pages: pages, Total: total}, nil
+}
+
+func (w *Web) mediaPanel(c *echo.Context, page int) error {
+	list, err := w.mediaList(c, page)
+	if err != nil {
 		return err
 	}
-	return Render(c, http.StatusOK, templates.MediaPanel(items, page, pages, total))
+	return Render(c, http.StatusOK, templates.MediaPanel(list))
+}
+
+// activeJobs is sorted because the pool's jobs come from a map, and table rows
+// would otherwise change places on every poll.
+func (w *Web) activeJobs() []*pool.Job {
+	jobs := w.pool.Jobs()
+	slices.SortFunc(jobs, func(a, b *pool.Job) int {
+		return cmp.Compare(a.Media.Name, b.Media.Name)
+	})
+	return jobs
 }
 
 func pageParam(c *echo.Context) int {

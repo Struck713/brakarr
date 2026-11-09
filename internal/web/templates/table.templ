@@ -7,6 +7,14 @@ import (
 	"github.com/Struck713/brakarr/internal/media"
 )
 
+// MediaList is one page of the library table.
+type MediaList struct {
+	Items []media.Media
+	Page  int
+	Pages int
+	Total int
+}
+
 func shortHash(hash []byte) string {
 	const visibleBytes = 6
 
@@ -24,67 +32,75 @@ func retryURL(hash []byte, page int) string {
 	return fmt.Sprintf("/media/%s/retry?page=%d", hex.EncodeToString(hash), page)
 }
 
+func statusView(status media.Status) (label, kind, iconName string) {
+	switch status {
+	case media.StatusFailed:
+		return "Failed", "danger", "x"
+	case media.StatusRunning:
+		return "Running", "info", "play"
+	case media.StatusSkipped:
+		return "Skipped", "neutral", "skip"
+	case media.StatusComplete:
+		return "Complete", "success", "check"
+	case media.StatusDeferred:
+		return "Waiting", "accent", "pause"
+	default:
+		return "Pending", "warning", "clock"
+	}
+}
+
 // MediaPanel is a self-refreshing fragment that keeps the current page across polls.
-templ MediaPanel(items []media.Media, page, pages, total int) {
-	<div id="media-panel" hx-get={ panelURL(page) } hx-trigger="every 5s" hx-swap="outerHTML">
-		if total == 0 {
-			<p class="text-muted">No media logged yet.</p>
+templ MediaPanel(list MediaList) {
+	<div id="media-panel" hx-get={ panelURL(list.Page) } hx-trigger="every 5s" hx-swap="outerHTML">
+		if list.Total == 0 {
+			<div class="empty">No media found yet.</div>
 		} else {
-			@table(items, page)
-			if pages > 1 {
-				<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Media pages">
-					<button
-						class="btn btn-sm btn-outline-secondary"
-						hx-get={ panelURL(page - 1) }
-						hx-target="#media-panel"
-						hx-swap="outerHTML"
-						disabled?={ page <= 1 }
-					>Previous</button>
-					<small class="text-muted">Page { fmt.Sprint(page) } of { fmt.Sprint(pages) } · { fmt.Sprint(total) } files</small>
-					<button
-						class="btn btn-sm btn-outline-secondary"
-						hx-get={ panelURL(page + 1) }
-						hx-target="#media-panel"
-						hx-swap="outerHTML"
-						disabled?={ page >= pages }
-					>Next</button>
-				</nav>
-			}
+			@table(list.Items, list.Page)
+			@pager(list)
 		}
 	</div>
 }
 
 templ table(items []media.Media, page int) {
-	<div class="table-responsive bg-white border rounded">
-		<table class="table table-hover align-middle mb-0">
+	<div class="table-wrap">
+		<table class="table">
 			<thead>
 				<tr>
-					<th scope="col">Hash</th>
+					<th scope="col" class="col-icon"><span class="sr-only">State</span></th>
 					<th scope="col">Title</th>
 					<th scope="col">Format</th>
 					<th scope="col">Bit Depth</th>
 					<th scope="col">Size</th>
+					<th scope="col">Hash</th>
 					<th scope="col">Status</th>
-					<th scope="col"></th>
+					<th scope="col" class="col-end"><span class="sr-only">Actions</span></th>
 				</tr>
 			</thead>
 			<tbody>
 				for _, item := range items {
+					{{ label, kind, iconName := statusView(item.Status) }}
 					<tr>
-						<td><code title={ hex.EncodeToString(item.Hash) }>{ shortHash(item.Hash) }</code></td>
-						<td>{ item.Name }</td>
+						<td class={ "col-icon", "status-" + kind }>
+							@icon(iconName)
+						</td>
+						<td class="col-title" title={ item.Path }>{ item.Name }</td>
 						<td>{ item.Format }</td>
 						<td>{ item.BitDepth }</td>
 						<td>{ formatBytes(item.Size) }</td>
-						<td>@statusBadge(item)</td>
-						<td class="text-end">
+						<td><code title={ hex.EncodeToString(item.Hash) }>{ shortHash(item.Hash) }</code></td>
+						<td><span class={ "label", "label-" + kind } title={ item.Error }>{ label }</span></td>
+						<td class="col-end">
 							if item.Status == media.StatusFailed {
 								<button
-									class="btn btn-sm btn-outline-primary"
+									class="icon-button"
+									title="Retry"
+									aria-label={ "Retry " + item.Name }
 									hx-post={ retryURL(item.Hash, page) }
 									hx-target="#media-panel"
 									hx-swap="outerHTML"
-								>Retry</button>
+								>
+									@icon("retry")
+								</button>
 							}
 						</td>
 					</tr>
@@ -94,19 +110,33 @@ templ table(items []media.Media, page int) {
 	</div>
 }
 
-templ statusBadge(item media.Media) {
-	switch item.Status {
-		case media.StatusFailed:
-			<span class="badge bg-danger" title={ item.Error }>Failed</span>
-		case media.StatusRunning:
-			<span class="badge bg-primary">Running</span>
-		case media.StatusSkipped:
-			<span class="badge bg-secondary" title={ item.Error }>Skipped</span>
-		case media.StatusComplete:
-			<span class="badge bg-success">Complete</span>
-		case media.StatusDeferred:
-			<span class="badge bg-secondary" title={ item.Error }>Waiting</span>
-		default:
-			<span class="badge bg-warning text-dark">Pending</span>
-	}
+templ pager(list MediaList) {
+	<nav class="pager" aria-label="Media pages">
+		if list.Pages > 1 {
+			<div class="pager-controls">
+				<button
+					class="icon-button"
+					aria-label="Previous page"
+					hx-get={ panelURL(list.Page - 1) }
+					hx-target="#media-panel"
+					hx-swap="outerHTML"
+					disabled?={ list.Page <= 1 }
+				>
+					@icon("left")
+				</button>
+				<span>{ fmt.Sprint(list.Page) } / { fmt.Sprint(list.Pages) }</span>
+				<button
+					class="icon-button"
+					aria-label="Next page"
+					hx-get={ panelURL(list.Page + 1) }
+					hx-target="#media-panel"
+					hx-swap="outerHTML"
+					disabled?={ list.Page >= list.Pages }
+				>
+					@icon("right")
+				</button>
+			</div>
+		}
+		<div class="pager-total">Total files: { fmt.Sprint(list.Total) }</div>
+	</nav>
 }
