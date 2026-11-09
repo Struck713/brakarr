@@ -3,55 +3,85 @@ package pool
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/Struck713/brakarr/internal/database"
 	"github.com/Struck713/brakarr/internal/media"
 	"github.com/Struck713/brakarr/internal/transcode"
 )
 
 const pollInterval = 5 * time.Second
+const maxDurationDrift = int64(time.Second / time.Microsecond)
+
+type Store interface {
+	ClaimNext(ctx context.Context) (*media.Media, error)
+	RequeueRunning(ctx context.Context) error
+	SetStatus(ctx context.Context, hash []byte, status media.Status) error
+	Fail(ctx context.Context, hash []byte, reason string) error
+	Skip(ctx context.Context, hash []byte, reason string) error
+	Release(ctx context.Context, hash []byte) error
+	Replace(ctx context.Context, oldHash []byte, next *media.Media) error
+}
+
+type Transcoder interface {
+	Transcode(ctx context.Context, input, output string, bitDepth int, onProgress func(transcode.Progress)) error
+}
+
+type Options struct {
+	Workers          int
+	WorkDir          string
+	ReplaceOriginals bool
+}
 
 type Pool struct {
-	db      *database.Database
-	ffmpeg  *transcode.FFmpeg
-	workers int
-	workDir string
-	wake    chan struct{}
+	store Store
+	tc    Transcoder
+	opts  Options
+	wake  chan struct{}
 
-	mu   sync.RWMutex
-	jobs map[int]*Job // active jobs by worker ID
+	// Overridable for tests.
+	probe func(path string, hash []byte) (*media.Media, error)
+	hash  func(path string) ([]byte, error)
 
+	mu     sync.RWMutex
+	jobs   map[int]*Job // active jobs by worker ID
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-func NewPool(db *database.Database, ffmpeg *transcode.FFmpeg, workers int, workDir string) *Pool {
+func NewPool(store Store, tc Transcoder, opts Options) *Pool {
 	return &Pool{
-		db:      db,
-		ffmpeg:  ffmpeg,
-		workers: workers,
-		workDir: workDir,
-		wake:    make(chan struct{}, 1),
-		jobs:    make(map[int]*Job),
+		store: store,
+		tc:    tc,
+		opts:  opts,
+		wake:  make(chan struct{}, 1),
+		probe: media.Probe,
+		hash:  media.Hash,
+		jobs:  make(map[int]*Job),
 	}
 }
 
 func (p *Pool) Start(parent context.Context) error {
-	ctx, cancel := context.WithCancel(parent)
-
-	if err := p.db.RequeueRunning(ctx); err != nil {
-		cancel()
+	if err := os.MkdirAll(p.opts.WorkDir, 0o755); err != nil {
+		return fmt.Errorf("create work dir: %w", err)
+	}
+	if err := p.store.RequeueRunning(parent); err != nil {
 		return fmt.Errorf("requeue orphaned jobs: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(parent)
+	p.mu.Lock()
 	p.cancel = cancel
-	for id := range p.workers {
+	p.mu.Unlock()
+
+	for id := range p.opts.Workers {
 		p.wg.Add(1)
 		go p.worker(ctx, id)
 	}
@@ -59,8 +89,11 @@ func (p *Pool) Start(parent context.Context) error {
 }
 
 func (p *Pool) Stop() {
-	if p.cancel != nil {
-		p.cancel()
+	p.mu.RLock()
+	cancel := p.cancel
+	p.mu.RUnlock()
+	if cancel != nil {
+		cancel()
 	}
 	p.wg.Wait()
 }
@@ -102,14 +135,15 @@ func (p *Pool) worker(ctx context.Context, id int) {
 	}
 }
 
-// runNext reports whether it claimed a job.
 func (p *Pool) runNext(ctx context.Context, id int) bool {
-	item, err := p.db.GetJobByStatus(ctx, media.StatusPending)
+	item, err := p.store.ClaimNext(ctx)
 	if err != nil {
+		if ctx.Err() == nil {
+			slog.Error("pool: claim job", "error", err)
+		}
 		return false
 	}
-
-	if err := p.db.UpdateStatus(ctx, item, media.StatusRunning); err != nil {
+	if item == nil {
 		return false
 	}
 
@@ -117,32 +151,155 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 	p.setJob(id, job)
 	defer p.clearJob(id)
 
-	output := filepath.Join(p.workDir, fmt.Sprintf("%v.mkv", hex.EncodeToString(item.Hash)))
-	err = p.ffmpeg.Transcode(ctx, item.Path, output, 22, job.SetProgress)
+	output := filepath.Join(p.opts.WorkDir, hex.EncodeToString(item.Hash)+".mkv")
+	os.Remove(output)
 
-	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	bitDepth, _ := strconv.Atoi(item.BitDepth) // unknown = treat as 8-bit
+	err = p.tc.Transcode(ctx, item.Path, output, bitDepth, job.SetProgress)
+
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
 	switch {
 	case ctx.Err() != nil:
 		os.Remove(output)
-		if err := p.db.UpdateStatus(dbCtx, item, media.StatusPending); err != nil {
-			log.Printf("pool: requeue %s: %v", item.Name, err)
+		if err := p.store.Release(dbCtx, item.Hash); err != nil {
+			slog.Error("pool: requeue after shutdown", "name", item.Name, "error", err)
 		}
 	case err != nil:
 		os.Remove(output)
-		log.Printf("pool: transcode %s: %v", item.Name, err)
-		if err := p.db.UpdateStatus(dbCtx, item, media.StatusFailed); err != nil {
-			log.Printf("pool: mark failed %s: %v", item.Name, err)
-		}
+		p.fail(dbCtx, item, fmt.Errorf("transcode: %w", err))
 	default:
-		if err := p.db.UpdateStatus(dbCtx, item, media.StatusComplete); err != nil {
-			log.Printf("pool: save %s: %v", item.Name, err)
-			return true
-		}
-		log.Printf("pool: completed %s", item.Name)
+		p.finish(dbCtx, item, output)
 	}
 	return true
+}
+
+func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
+	slog.Error("pool: job failed", "name", item.Name, "error", cause)
+	if err := p.store.Fail(ctx, item.Hash, cause.Error()); err != nil {
+		slog.Error("pool: mark failed", "name", item.Name, "error", err)
+	}
+}
+
+func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
+	next, skipReason, err := p.verify(item, output)
+	switch {
+	case err != nil:
+		os.Remove(output)
+		p.fail(ctx, item, fmt.Errorf("verify output: %w", err))
+		return
+	case skipReason != "":
+		os.Remove(output)
+		slog.Info("pool: skipped", "name", item.Name, "reason", skipReason)
+		if err := p.store.Skip(ctx, item.Hash, skipReason); err != nil {
+			slog.Error("pool: mark skipped", "name", item.Name, "error", err)
+		}
+		return
+	}
+
+	if p.opts.ReplaceOriginals {
+		if err := p.replaceOriginal(ctx, item, output, next); err != nil {
+			p.fail(ctx, item, fmt.Errorf("replace original: %w", err))
+			return
+		}
+		slog.Info("pool: replaced original", "name", item.Name, "before", item.Size, "after", next.Size)
+		return
+	}
+
+	if err := p.store.SetStatus(ctx, item.Hash, media.StatusComplete); err != nil {
+		slog.Error("pool: mark complete", "name", item.Name, "error", err)
+		return
+	}
+	slog.Info("pool: completed", "name", item.Name, "output", output, "before", item.Size, "after", next.Size)
+}
+
+func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skipReason string, err error) {
+	next, err = p.probe(output, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if !next.IsHEVC() {
+		return nil, "", fmt.Errorf("output is %q, expected HEVC", next.Format)
+	}
+	if item.Duration > 0 {
+		drift := next.Duration - item.Duration
+		if drift < 0 {
+			drift = -drift
+		}
+		if next.Duration == 0 || drift > maxDurationDrift {
+			return nil, "", fmt.Errorf("duration mismatch: source %dus, output %dus", item.Duration, next.Duration)
+		}
+	}
+	if next.Size <= 0 {
+		return nil, "", errors.New("output is empty")
+	}
+	if item.Size > 0 && next.Size >= item.Size {
+		return nil, fmt.Sprintf("output not smaller (%d >= %d bytes)", next.Size, item.Size), nil
+	}
+	return next, "", nil
+}
+
+func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media) error {
+	st, err := os.Stat(item.Path)
+	if err != nil {
+		return err
+	}
+	if item.Size > 0 && st.Size() != item.Size {
+		return errors.New("source changed while transcoding")
+	}
+	if err := moveFile(output, item.Path); err != nil {
+		return err
+	}
+
+	hash, err := p.hash(item.Path)
+	if err != nil {
+		return fmt.Errorf("original replaced but re-hash failed: %w", err)
+	}
+	next.Hash, next.Path, next.Name = hash, item.Path, item.Name
+	if err := p.store.Replace(ctx, item.Hash, next); err != nil {
+		return fmt.Errorf("original replaced but database update failed: %w", err)
+	}
+	return nil
+}
+
+func moveFile(src, dst string) error {
+	if st, err := os.Stat(dst); err == nil {
+		defer os.Chmod(dst, st.Mode().Perm())
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+
+	tmp := dst + ".brakarr.tmp"
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Remove(src)
 }
 
 func (p *Pool) setJob(id int, job *Job) {

@@ -15,9 +15,7 @@ type Job struct {
 }
 
 func NewJob(media *media.Media) *Job {
-	return &Job{
-		Media: media,
-	}
+	return &Job{Media: media}
 }
 
 func (j *Job) SetProgress(progress transcode.Progress) {
