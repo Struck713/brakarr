@@ -1,46 +1,66 @@
 package media
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/kalafut/imohash"
 	"github.com/zelenin/go-mediainfo"
 )
 
 type Media struct {
-	Hash      []byte `json:"hash"`
-	Path      string `json:"path"`
-	Name      string `json:"title"`
-	Format    string `json:"format"`
-	BitDepth  string `json:"bit_depth" db:"bit_depth"`
-	Duration  int64  `json:"duration" db:"duration"`
-	Size      string `json:"size"`
-	CreatedAt int64  `json:"created_at" db:"created_at" goqu:"omitempty"`
-	Status    Status `json:"status" goqu:"omitempty"`
+	Hash      []byte
+	Path      string
+	Name      string
+	Format    string
+	BitDepth  string
+	Duration  int64 // microseconds
+	Size      int64 // bytes
+	CreatedAt int64 // unix seconds
+	Status    Status
+	Error     string // last failure reason, if any
+	Attempts  int
 }
 
-func NewMedia(path string, hash []byte) (*Media, error) {
+func (m *Media) IsHEVC() bool {
+	return strings.EqualFold(m.Format, "HEVC")
+}
+
+func Hash(path string) ([]byte, error) {
+	sum, err := imohash.SumFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return sum[:], nil
+}
+
+func Probe(path string, hash []byte) (*Media, error) {
 	info, err := mediainfo.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("mediainfo open: %s", err)
+		return nil, fmt.Errorf("mediainfo open: %w", err)
 	}
 	defer info.Close()
 
-	size := info.Parameter(mediainfo.StreamGeneral, 0, "FileSize")
-	format := info.Parameter(mediainfo.StreamVideo, 0, "Format")
-	bit_depth := info.Parameter(mediainfo.StreamVideo, 0, "BitDepth")
-	duration := info.Parameter(mediainfo.StreamGeneral, 0, "Duration")
-	return &Media{
+	size, _ := strconv.ParseInt(info.Parameter(mediainfo.StreamGeneral, 0, "FileSize"), 10, 64)
+	m := &Media{
 		Hash:     hash,
 		Path:     path,
 		Name:     filepath.Base(path),
 		Size:     size,
-		Format:   format,
-		BitDepth: bit_depth,
-		Duration: parseDurationUs(duration),
-	}, nil
+		Format:   info.Parameter(mediainfo.StreamVideo, 0, "Format"),
+		BitDepth: info.Parameter(mediainfo.StreamVideo, 0, "BitDepth"),
+		Duration: parseDurationUs(info.Parameter(mediainfo.StreamGeneral, 0, "Duration")),
+	}
+	if m.Format == "" {
+		return m, ErrNoVideo
+	}
+	return m, nil
 }
+
+var ErrNoVideo = errors.New("no video stream found")
 
 func parseDurationUs(milliseconds string) int64 {
 	value, err := strconv.ParseFloat(milliseconds, 64)
