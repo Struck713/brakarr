@@ -37,7 +37,7 @@ func (w *Web) Init() {
 	})
 
 	e.GET("/crawler", func(c *echo.Context) error {
-		records, err := w.db.All()
+		records, err := w.db.All(c.Request().Context())
 		if err != nil {
 			return err
 		}
@@ -45,11 +45,8 @@ func (w *Web) Init() {
 	})
 
 	e.GET("/job", func(c *echo.Context) error {
-		job := w.pool.Job
-		if job == nil {
-			return Render(c, http.StatusOK, templates.ActiveJob(nil, nil))
-		}
-		return Render(c, http.StatusOK, templates.ActiveJob(job.Media, job.Status))
+		jobs := w.pool.Jobs()
+		return Render(c, http.StatusOK, templates.ActiveJobs(jobs))
 	})
 
 	if err := e.Start(":1323"); err != nil {

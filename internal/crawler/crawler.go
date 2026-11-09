@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"context"
 	"io/fs"
 	"log"
 	"path/filepath"
@@ -54,7 +55,8 @@ func (q *Crawler) Walk(path string, d fs.DirEntry, err error) error {
 	}
 	log.Printf("hash complete: %s => %016x", file_name, hash)
 
-	record, err := q.db.Get(hash)
+	context := context.Background()
+	record, err := q.db.Get(context, hash)
 	if err != nil {
 		return err
 	}
@@ -67,7 +69,7 @@ func (q *Crawler) Walk(path string, d fs.DirEntry, err error) error {
 		}
 
 		log.Printf("saving media: %+v", media)
-		if err := q.db.Log(media); err != nil {
+		if err := q.db.Log(context, media); err != nil {
 			return err
 		}
 	}

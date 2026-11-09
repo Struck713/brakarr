@@ -3,6 +3,7 @@ package transcode
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -19,7 +20,7 @@ func NewFFmpeg(device string) *FFmpeg {
 	}
 }
 
-func (ffmpeg *FFmpeg) Transcode(input, output string, quality int, onProgress func(Progress)) error {
+func (ffmpeg *FFmpeg) Transcode(context context.Context, input, output string, quality int, onProgress func(Progress)) error {
 	args := []string{
 		"-hwaccel", "vaapi", "-hwaccel_device", ffmpeg.Device,
 		"-hwaccel_output_format", "vaapi",

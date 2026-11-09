@@ -1,8 +1,8 @@
 package database
 
 import (
+	"context"
 	"database/sql"
-	"errors"
 	"log"
 
 	"github.com/Struck713/brakarr/internal/media"
@@ -31,6 +31,7 @@ func NewDatabase() *Database {
 			format TEXT NOT NULL,
 			bit_depth TEXT NOT NULL,
 			size TEXT NOT NULL,
+			duration INTEGER NOT NULL,
 			created_at INTEGER NOT NULL DEFAULT (unixepoch()),
 			status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'failed', 'skipped', 'complete')) DEFAULT 'pending'
 		) WITHOUT ROWID;
@@ -45,20 +46,23 @@ func NewDatabase() *Database {
 	return &Database{db: db}
 }
 
-func (d *Database) Log(media *media.Media) error {
-	_, err := d.db.Insert("files").Rows(media).Executor().Exec()
+func (d *Database) Log(context context.Context, media *media.Media) error {
+	_, err := d.db.Insert("files").
+		Rows(media).
+		Executor().
+		ExecContext(context)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (d *Database) Get(hash []byte) (*media.Media, error) {
+func (d *Database) Get(context context.Context, hash []byte) (*media.Media, error) {
 	media := &media.Media{}
 	found, err := d.db.From("files").
 		Select().
 		Where(goqu.Ex{"hash": hash}).
-		ScanStruct(media)
+		ScanStructContext(context, media)
 
 	if err != nil {
 		return nil, err
@@ -71,36 +75,61 @@ func (d *Database) Get(hash []byte) (*media.Media, error) {
 	return media, nil
 }
 
-func (d *Database) GetNextNotProcessed() (*media.Media, error) {
-	m := &media.Media{}
-	found, err := d.db.From("files").
+func (d *Database) GetJobsByStatus(context context.Context, status media.Status) ([]media.Media, error) {
+	m := []media.Media{}
+	err := d.db.From("files").
 		Select().
-		Where(goqu.Ex{"status": media.StatusPending}).
-		ScanStruct(m)
+		Where(goqu.Ex{"status": status}).
+		ScanStructsContext(context, &m)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if !found {
-		return nil, errors.New("there was no next processed")
-	}
-
 	return m, nil
 }
 
-func (d *Database) Process(media *media.Media) error {
+func (d *Database) GetJobByStatus(context context.Context, status media.Status) (*media.Media, error) {
+	m := media.Media{}
+	found, err := d.db.From("files").
+		Select().
+		Where(goqu.Ex{"status": status}).
+		ScanStructContext(context, &m)
+
+	if !found {
+		return nil, sql.ErrNoRows
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &m, nil
+}
+
+func (d *Database) UpdateStatus(context context.Context, media *media.Media, status media.Status) error {
 	_, err := d.db.Update("files").
-		Set(goqu.Ex{"processed": true}).
+		Set(goqu.Ex{"status": status}).
 		Where(goqu.Ex{"hash": media.Hash}).
 		Executor().
-		Exec()
+		ExecContext(context)
 	return err
 }
 
-func (d *Database) All() ([]media.Media, error) {
+func (d *Database) RequeueRunning(context context.Context) error {
+	_, err := d.db.Update("files").
+		Set(goqu.Ex{"status": media.StatusPending}).
+		Where(goqu.Ex{"status": media.StatusRunning}).
+		Executor().
+		ExecContext(context)
+	return err
+}
+
+func (d *Database) All(context context.Context) ([]media.Media, error) {
 	medias := []media.Media{}
-	err := d.db.From("files").Select().ScanStructs(&medias)
+	err := d.db.From("files").
+		Select().
+		ScanStructsContext(context, &medias)
 
 	if err != nil {
 		return nil, err

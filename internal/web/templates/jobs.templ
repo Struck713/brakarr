@@ -1,0 +1,101 @@
+package templates
+
+import "fmt"
+import "github.com/Struck713/brakarr/internal/pool"
+import "github.com/Struck713/brakarr/internal/transcode"
+import "github.com/Struck713/brakarr/internal/media"
+import "strconv"
+
+
+func formatBytes(size int64) string {
+	const unit = 1024
+
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(size)/float64(div), "KMGTPE"[exp])
+}
+
+templ ActiveJobs(jobs []*pool.Job) {
+	if (len(jobs) <= 0) {
+		<div class="card">
+			<div class="card-body text-muted">No active jobs.</div>
+		</div>
+	} else {
+		<div class="d-flex justify-content-between align-items-start gap-3">
+			for _, job := range jobs {
+				@activeJob(job.Media, job.Progress())
+			}
+		</div>
+	}
+}
+
+templ activeJob(media *media.Media, status *transcode.Progress) {
+	if media == nil {
+		<div class="card">
+			<div class="card-body text-muted">No active job.</div>
+		</div>
+	} else {
+		<div class="card">
+			<div class="card-body">
+				<div class="d-flex justify-content-between align-items-start gap-3">
+					<div>
+						<h3 class="h6 mb-1">{ media.Name }</h3>
+						<small class="text-muted">{ media.Format } · { fmt.Sprint(media.BitDepth) }-bit</small>
+					</div>
+					@jobBadge(status)
+				</div>
+				if status != nil {
+					if media.Duration > 0 {
+						@jobProgress(status.Percent(media.Duration))
+					}
+					<dl class="row row-cols-2 row-cols-md-4 g-3 mt-2 mb-0">
+						@stat("Encoded time", status.OutTime)
+						@stat("Speed", status.Speed)
+						@stat("FPS", fmt.Sprintf("%.1f", status.Fps))
+						@stat("Frame", strconv.FormatInt(status.Frame, 10))
+						@stat("Bitrate", status.Bitrate)
+						@stat("Output size", formatBytes(status.TotalSize))
+						@stat("Duplicate frames", strconv.FormatInt(status.DupFrames, 10))
+						@stat("Dropped frames", strconv.FormatInt(status.DropFrames, 10))
+					</dl>
+				}
+			</div>
+		</div>
+	}
+}
+
+templ jobBadge(status *transcode.Progress) {
+	if status == nil {
+		<span class="badge bg-secondary">Starting</span>
+	} else if status.Done {
+		<span class="badge bg-success">Done</span>
+	} else {
+		<span class="badge bg-primary">Transcoding</span>
+	}
+}
+
+templ jobProgress(percent float64) {
+	<div class="d-flex align-items-center gap-2 mt-3">
+		<progress
+			class="flex-grow-1"
+			max="100"
+			value={ fmt.Sprintf("%.1f", percent) }
+			aria-label="Transcode progress"
+		></progress>
+		<small class="text-muted">{ fmt.Sprintf("%.1f%%", percent) }</small>
+	</div>
+}
+
+templ stat(label, value string) {
+	<div class="col">
+		<dt class="small text-muted fw-normal">{ label }</dt>
+		<dd class="mb-0">{ value }</dd>
+	</div>
+}

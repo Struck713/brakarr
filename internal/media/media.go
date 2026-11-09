@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/zelenin/go-mediainfo"
 )
@@ -13,6 +14,7 @@ type Media struct {
 	Name      string `json:"title"`
 	Format    string `json:"format"`
 	BitDepth  string `json:"bit_depth" db:"bit_depth"`
+	Duration  int64  `json:"duration" db:"duration"`
 	Size      string `json:"size"`
 	CreatedAt int64  `json:"created_at" db:"created_at" goqu:"omitempty"`
 	Status    Status `json:"status" goqu:"omitempty"`
@@ -28,6 +30,7 @@ func NewMedia(path string, hash []byte) (*Media, error) {
 	size := info.Parameter(mediainfo.StreamGeneral, 0, "FileSize")
 	format := info.Parameter(mediainfo.StreamVideo, 0, "Format")
 	bit_depth := info.Parameter(mediainfo.StreamVideo, 0, "BitDepth")
+	duration := info.Parameter(mediainfo.StreamGeneral, 0, "Duration")
 	return &Media{
 		Hash:     hash,
 		Path:     path,
@@ -35,5 +38,14 @@ func NewMedia(path string, hash []byte) (*Media, error) {
 		Size:     size,
 		Format:   format,
 		BitDepth: bit_depth,
+		Duration: parseDurationUs(duration),
 	}, nil
+}
+
+func parseDurationUs(milliseconds string) int64 {
+	value, err := strconv.ParseFloat(milliseconds, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(value * 1000)
 }

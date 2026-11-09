@@ -27,7 +27,13 @@ func (o *Progress) set(key, value string) {
 	case "total_size":
 		o.TotalSize, _ = strconv.ParseInt(value, 10, 64)
 	case "out_time_us":
+		o.OutTimeUs, _ = strconv.ParseInt(value, 10, 64)
+	case "out_time_ms":
+		o.OutTimeMs, _ = strconv.ParseInt(value, 10, 64)
+	case "out_time":
 		o.OutTime = value
+	case "progress":
+		o.Done = value == "end"
 	case "dup_frames":
 		o.DupFrames, _ = strconv.ParseInt(value, 10, 64)
 	case "drop_frames":
@@ -35,4 +41,14 @@ func (o *Progress) set(key, value string) {
 	case "speed":
 		o.Speed = value
 	}
+}
+
+func (o *Progress) Percent(durationUs int64) float64 {
+	if o.Done {
+		return 100
+	}
+	if durationUs <= 0 {
+		return 0
+	}
+	return min(float64(o.OutTimeUs)/float64(durationUs)*100, 100)
 }
