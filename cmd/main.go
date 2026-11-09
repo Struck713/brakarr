@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Struck713/brakarr/internal/arr"
 	"github.com/Struck713/brakarr/internal/config"
 	"github.com/Struck713/brakarr/internal/crawler"
 	"github.com/Struck713/brakarr/internal/database"
@@ -46,11 +47,17 @@ func run() error {
 	}
 	defer db.Close()
 
-	jobs := pool.NewPool(db, ffmpeg, pool.Options{
+	poolOpts := pool.Options{
 		Workers:        cfg.Workers,
 		WorkDir:        cfg.WorkDir,
 		SkipHardlinked: cfg.SkipHardlinked,
-	})
+	}
+	if len(cfg.Arr) > 0 {
+		notifier := arr.NewNotifier(cfg.Arr, cfg.ArrPathMap)
+		poolOpts.OnReplaced = notifier.Replaced
+		go notifier.Run(ctx)
+	}
+	jobs := pool.NewPool(db, ffmpeg, poolOpts)
 	if err := jobs.Start(ctx); err != nil {
 		return err
 	}

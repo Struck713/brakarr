@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Struck713/brakarr/internal/arr"
 )
 
 type Config struct {
@@ -26,6 +28,8 @@ type Config struct {
 	ListenAddr     string
 	SkipHardlinked bool
 	LogLevel       slog.Level
+	Arr            []arr.App
+	ArrPathMap     []arr.PathMap
 }
 
 func Load() (*Config, error) {
@@ -110,6 +114,28 @@ func fromEnv(get func(string) string) (*Config, error) {
 		c.Extensions = append(c.Extensions, ext)
 	}
 
+	for _, app := range []struct {
+		name, prefix string
+		build        func(url, key string) arr.App
+	}{
+		{"Sonarr", "SONARR", arr.Sonarr},
+		{"Radarr", "RADARR", arr.Radarr},
+	} {
+		url, key := str(app.prefix+"_URL", ""), str(app.prefix+"_API_KEY", "")
+		switch {
+		case url == "" && key == "":
+		case url == "" || key == "":
+			errs = append(errs, fmt.Errorf("%s_URL and %s_API_KEY must be set together", app.prefix, app.prefix))
+		default:
+			c.Arr = append(c.Arr, app.build(url, key))
+		}
+	}
+	maps, err := parsePathMap(str("ARR_PATH_MAP", ""))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	c.ArrPathMap = maps
+
 	if err := c.LogLevel.UnmarshalText([]byte(str("LOG_LEVEL", "info"))); err != nil {
 		errs = append(errs, fmt.Errorf("LOG_LEVEL: %w", err))
 	}
@@ -175,4 +201,21 @@ func parseValue(raw string) string {
 		}
 	}
 	return strings.TrimSpace(inlineComment.ReplaceAllString(raw, ""))
+}
+
+// parsePathMap parses "local=remote[,local=remote]".
+func parsePathMap(raw string) ([]arr.PathMap, error) {
+	var maps []arr.PathMap
+	for _, pair := range strings.Split(raw, ",") {
+		if strings.TrimSpace(pair) == "" {
+			continue
+		}
+		local, remote, ok := strings.Cut(pair, "=")
+		local, remote = strings.TrimRight(strings.TrimSpace(local), "/"), strings.TrimRight(strings.TrimSpace(remote), "/")
+		if !ok || local == "" || remote == "" {
+			return nil, fmt.Errorf("ARR_PATH_MAP: %q must look like local=remote", strings.TrimSpace(pair))
+		}
+		maps = append(maps, arr.PathMap{Local: local, Remote: remote})
+	}
+	return maps, nil
 }

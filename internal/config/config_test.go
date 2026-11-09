@@ -85,3 +85,24 @@ func TestUnsupportedExtensionIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want .avi error", err)
 	}
 }
+
+func TestArrURLAndKeyMustBeSetTogether(t *testing.T) {
+	_, err := fromEnv(env(t, map[string]string{"SONARR_URL": "http://sonarr:8989"}))
+	if err == nil || !strings.Contains(err.Error(), "SONARR_URL and SONARR_API_KEY") {
+		t.Errorf("err = %v", err)
+	}
+	c, err := fromEnv(env(t, map[string]string{"RADARR_URL": "http://r:7878", "RADARR_API_KEY": "k"}))
+	if err != nil || len(c.Arr) != 1 || c.Arr[0].Name != "radarr" {
+		t.Errorf("c.Arr = %+v, err = %v", c, err)
+	}
+}
+
+func TestParsePathMap(t *testing.T) {
+	maps, err := parsePathMap("/data/media/=/media, /downloads=/dl/")
+	if err != nil || len(maps) != 2 || maps[0].Local != "/data/media" || maps[0].Remote != "/media" || maps[1].Remote != "/dl" {
+		t.Errorf("maps = %+v, err = %v", maps, err)
+	}
+	if _, err := parsePathMap("nonsense"); err == nil {
+		t.Error("want an error for a pair without =")
+	}
+}

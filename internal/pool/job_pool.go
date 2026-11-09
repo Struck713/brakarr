@@ -40,6 +40,8 @@ type Options struct {
 	Workers        int
 	WorkDir        string
 	SkipHardlinked bool
+	// OnReplaced is called with the path of every original that was replaced.
+	OnReplaced func(path string)
 }
 
 type Pool struct {
@@ -259,6 +261,9 @@ func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output st
 	}
 	if err := moveFile(output, item.Path); err != nil {
 		return err
+	}
+	if p.opts.OnReplaced != nil {
+		p.opts.OnReplaced(item.Path)
 	}
 
 	hash, err := p.hash(item.Path)

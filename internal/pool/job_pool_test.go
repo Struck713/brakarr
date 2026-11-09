@@ -201,3 +201,12 @@ func TestOutputKeepsSourceContainer(t *testing.T) {
 		}
 	}
 }
+
+func TestOnReplacedCalledWithPath(t *testing.T) {
+	var got string
+	f := newFixture(t, "movie.mkv", Options{OnReplaced: func(p string) { got = p }})
+	f.pool.runNext(context.Background(), 0)
+	if got != f.src {
+		t.Errorf("OnReplaced path = %q, want %q", got, f.src)
+	}
+}
