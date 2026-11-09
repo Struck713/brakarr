@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -23,7 +24,6 @@ const maxDurationDrift = int64(time.Second / time.Microsecond)
 type Store interface {
 	ClaimNext(ctx context.Context) (*media.Media, error)
 	RequeueRunning(ctx context.Context) error
-	SetStatus(ctx context.Context, hash []byte, status media.Status) error
 	Fail(ctx context.Context, hash []byte, reason string) error
 	Skip(ctx context.Context, hash []byte, reason string) error
 	Release(ctx context.Context, hash []byte) error
@@ -35,9 +35,8 @@ type Transcoder interface {
 }
 
 type Options struct {
-	Workers          int
-	WorkDir          string
-	ReplaceOriginals bool
+	Workers int
+	WorkDir string
 }
 
 type Pool struct {
@@ -75,6 +74,7 @@ func (p *Pool) Start(parent context.Context) error {
 	if err := p.store.RequeueRunning(parent); err != nil {
 		return fmt.Errorf("requeue orphaned jobs: %w", err)
 	}
+	p.cleanWorkDir()
 
 	ctx, cancel := context.WithCancel(parent)
 	p.mu.Lock()
@@ -198,20 +198,12 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 		return
 	}
 
-	if p.opts.ReplaceOriginals {
-		if err := p.replaceOriginal(ctx, item, output, next); err != nil {
-			p.fail(ctx, item, fmt.Errorf("replace original: %w", err))
-			return
-		}
-		slog.Info("pool: replaced original", "name", item.Name, "before", item.Size, "after", next.Size)
+	if err := p.replaceOriginal(ctx, item, output, next); err != nil {
+		os.Remove(output)
+		p.fail(ctx, item, fmt.Errorf("replace original: %w", err))
 		return
 	}
-
-	if err := p.store.SetStatus(ctx, item.Hash, media.StatusComplete); err != nil {
-		slog.Error("pool: mark complete", "name", item.Name, "error", err)
-		return
-	}
-	slog.Info("pool: completed", "name", item.Name, "output", output, "before", item.Size, "after", next.Size)
+	slog.Info("pool: replaced original", "name", item.Name, "before", item.Size, "after", next.Size)
 }
 
 func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skipReason string, err error) {
@@ -312,4 +304,20 @@ func (p *Pool) clearJob(id int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.jobs, id)
+}
+
+// Only ever deletes Brakarr's own hash-named outputs, in case WORK_DIR is shared.
+var workFile = regexp.MustCompile(`^[0-9a-f]{32}\.(mkv|mp4)$`)
+
+func (p *Pool) cleanWorkDir() {
+	entries, err := os.ReadDir(p.opts.WorkDir)
+	if err != nil {
+		slog.Warn("pool: read work dir", "error", err)
+		return
+	}
+	for _, e := range entries {
+		if e.Type().IsRegular() && workFile.MatchString(e.Name()) {
+			os.Remove(filepath.Join(p.opts.WorkDir, e.Name()))
+		}
+	}
 }

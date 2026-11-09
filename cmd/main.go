@@ -47,9 +47,8 @@ func run() error {
 	defer db.Close()
 
 	jobs := pool.NewPool(db, ffmpeg, pool.Options{
-		Workers:          cfg.Workers,
-		WorkDir:          cfg.WorkDir,
-		ReplaceOriginals: cfg.ReplaceOriginals,
+		Workers: cfg.Workers,
+		WorkDir: cfg.WorkDir,
 	})
 	if err := jobs.Start(ctx); err != nil {
 		return err
@@ -66,7 +65,7 @@ func run() error {
 	go crawl.Run(ctx)
 
 	slog.Info("brakarr started", "listen", cfg.ListenAddr, "crawl", cfg.CrawlPath,
-		"workers", cfg.Workers, "replace_originals", cfg.ReplaceOriginals)
+		"workers", cfg.Workers)
 
 	server := web.NewWeb(db, jobs)
 	if err := server.Run(ctx, cfg.ListenAddr); err != nil && !errors.Is(err, context.Canceled) {

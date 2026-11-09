@@ -7,24 +7,24 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	CrawlPath        string
-	Extensions       []string
-	CrawlInterval    time.Duration
-	MinFileAge       time.Duration
-	WorkDir          string
-	DBPath           string
-	VaapiDevice      string
-	Quality          int
-	Workers          int
-	ListenAddr       string
-	ReplaceOriginals bool
-	LogLevel         slog.Level
+	CrawlPath     string
+	Extensions    []string
+	CrawlInterval time.Duration
+	MinFileAge    time.Duration
+	WorkDir       string
+	DBPath        string
+	VaapiDevice   string
+	Quality       int
+	Workers       int
+	ListenAddr    string
+	LogLevel      slog.Level
 }
 
 func Load() (*Config, error) {
@@ -66,22 +66,30 @@ func fromEnv(get func(string) string) (*Config, error) {
 		}
 		return d
 	}
-	boolean := func(key string) bool {
-		b, _ := strconv.ParseBool(str(key, ""))
+	boolean := func(key string, def bool) bool {
+		v := str(key, "")
+		if v == "" {
+			return def
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", key, err))
+			return def
+		}
 		return b
 	}
+	_ = boolean
 
 	c := &Config{
-		CrawlPath:        str("CRAWL_PATH", ""),
-		CrawlInterval:    duration("CRAWL_INTERVAL", 10*time.Minute),
-		MinFileAge:       duration("MIN_FILE_AGE", 30*time.Second),
-		WorkDir:          str("WORK_DIR", "./work"),
-		DBPath:           str("DB_PATH", "app.db"),
-		VaapiDevice:      str("VAAPI_DEVICE", "/dev/dri/renderD128"),
-		Quality:          integer("QUALITY", 22),
-		Workers:          integer("WORKERS", 1),
-		ListenAddr:       str("LISTEN_ADDR", "127.0.0.1:1323"),
-		ReplaceOriginals: boolean("REPLACE_ORIGINALS"),
+		CrawlPath:     str("CRAWL_PATH", ""),
+		CrawlInterval: duration("CRAWL_INTERVAL", 10*time.Minute),
+		MinFileAge:    duration("MIN_FILE_AGE", 30*time.Second),
+		WorkDir:       str("WORK_DIR", "./work"),
+		DBPath:        str("DB_PATH", "app.db"),
+		VaapiDevice:   str("VAAPI_DEVICE", "/dev/dri/renderD128"),
+		Quality:       integer("QUALITY", 22),
+		Workers:       integer("WORKERS", 1),
+		ListenAddr:    str("LISTEN_ADDR", "127.0.0.1:1323"),
 	}
 
 	for _, ext := range strings.Split(str("CRAWL_EXTENSIONS", ".mkv"), ",") {
@@ -141,10 +149,23 @@ func loadDotEnv(path string) error {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		value = parseValue(value)
 		if _, set := os.LookupEnv(key); !set {
 			os.Setenv(key, value)
 		}
 	}
 	return sc.Err()
+}
+
+var inlineComment = regexp.MustCompile(`\s+#.*$`)
+
+// parseValue unquotes a value, or strips a trailing " # comment" from an unquoted one.
+func parseValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) > 1 && (raw[0] == '"' || raw[0] == '\'') {
+		if end := strings.IndexByte(raw[1:], raw[0]); end >= 0 {
+			return raw[1 : end+1]
+		}
+	}
+	return strings.TrimSpace(inlineComment.ReplaceAllString(raw, ""))
 }
