@@ -1,43 +1,50 @@
 package transcode
 
-import "strconv"
+import (
+	"bufio"
+	"io"
+	"strconv"
+	"strings"
+)
 
 type Progress struct {
-	Frame      int64   `json:"frame"`
-	Fps        float64 `json:"fps"`
-	Bitrate    string  `json:"bitrate"`
-	TotalSize  int64   `json:"total_size"`
-	OutTimeUs  int64   `json:"out_time_us"`
-	OutTimeMs  int64   `json:"out_time_ms"`
-	OutTime    string  `json:"out_time"`
-	DupFrames  int64   `json:"dup_frames"`
-	DropFrames int64   `json:"drop_frames"`
-	Speed      string  `json:"speed"`
-	Done       bool    `json:"done"`
+	Frame      int64
+	Fps        float64
+	Bitrate    string
+	TotalSize  int64
+	OutTimeUs  int64 // ffmpeg's out_time_ms is also microseconds, so it is not tracked separately
+	OutTime    string
+	DupFrames  int64
+	DropFrames int64
+	Speed      string
+	Done       bool
 }
 
 func (o *Progress) set(key, value string) {
+	parseInt := func(dst *int64) {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			*dst = n
+		}
+	}
 	switch key {
 	case "frame":
-		o.Frame, _ = strconv.ParseInt(value, 10, 64)
+		parseInt(&o.Frame)
 	case "fps":
-		o.Fps, _ = strconv.ParseFloat(value, 64)
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			o.Fps = f
+		}
 	case "bitrate":
 		o.Bitrate = value
 	case "total_size":
-		o.TotalSize, _ = strconv.ParseInt(value, 10, 64)
+		parseInt(&o.TotalSize)
 	case "out_time_us":
-		o.OutTimeUs, _ = strconv.ParseInt(value, 10, 64)
-	case "out_time_ms":
-		o.OutTimeMs, _ = strconv.ParseInt(value, 10, 64)
+		parseInt(&o.OutTimeUs)
 	case "out_time":
 		o.OutTime = value
-	case "progress":
-		o.Done = value == "end"
 	case "dup_frames":
-		o.DupFrames, _ = strconv.ParseInt(value, 10, 64)
+		parseInt(&o.DupFrames)
 	case "drop_frames":
-		o.DropFrames, _ = strconv.ParseInt(value, 10, 64)
+		parseInt(&o.DropFrames)
 	case "speed":
 		o.Speed = value
 	}
@@ -51,4 +58,30 @@ func (o *Progress) Percent(durationUs int64) float64 {
 		return 0
 	}
 	return min(float64(o.OutTimeUs)/float64(durationUs)*100, 100)
+}
+
+func ParseProgress(r io.Reader, onProgress func(Progress)) error {
+	current := Progress{}
+	scanner := bufio.NewScanner(r)
+
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+
+		if key != "progress" {
+			current.set(key, value)
+			continue
+		}
+
+		current.Done = value == "end"
+		if onProgress != nil {
+			onProgress(current)
+		}
+		current = Progress{}
+	}
+	return scanner.Err()
 }
