@@ -3,19 +3,21 @@ package web
 import (
 	"net/http"
 
-	"github.com/Struck713/brakarr/database"
-	"github.com/Struck713/brakarr/web/templates"
+	"github.com/Struck713/brakarr/internal/database"
+	"github.com/Struck713/brakarr/internal/pool"
+	"github.com/Struck713/brakarr/internal/web/templates"
 	"github.com/a-h/templ"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 )
 
 type Web struct {
-	db *database.Database
+	db   *database.Database
+	pool *pool.Pool
 }
 
-func NewWeb(db *database.Database) *Web {
-	return &Web{db: db}
+func NewWeb(db *database.Database, pool *pool.Pool) *Web {
+	return &Web{db: db, pool: pool}
 }
 
 func Render(c *echo.Context, statusCode int, t templ.Component) error {
@@ -40,6 +42,14 @@ func (w *Web) Init() {
 			return err
 		}
 		return Render(c, http.StatusOK, templates.Table(records))
+	})
+
+	e.GET("/job", func(c *echo.Context) error {
+		job := w.pool.Job
+		if job == nil {
+			return Render(c, http.StatusOK, templates.ActiveJob(nil, nil))
+		}
+		return Render(c, http.StatusOK, templates.ActiveJob(job.Media, job.Status))
 	})
 
 	if err := e.Start(":1323"); err != nil {

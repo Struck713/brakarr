@@ -1,0 +1,37 @@
+package templates
+
+templ Index() {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>Brakarr</title>
+			<link
+				href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css"
+				rel="stylesheet"
+				integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC"
+				crossorigin="anonymous"
+			/>
+		</head>
+		<body class="bg-light">
+			<main class="container py-4">
+				<h1 class="h3 mb-4">Brakarr</h1>
+				<section class="mb-4" aria-labelledby="active-job-heading">
+					<h2 id="active-job-heading" class="h5 mb-3">Active job</h2>
+					<div hx-get="/job" hx-trigger="load, every 2s">
+						<p class="text-muted">Loading active job...</p>
+					</div>
+				</section>
+				<section aria-labelledby="media-heading">
+					<h2 id="media-heading" class="h5 mb-3">Media</h2>
+					<div hx-get="/crawler" hx-trigger="load, every 5s">
+						<p class="text-muted">Loading media...</p>
+					</div>
+				</section>
+			</main>
+			<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+			<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js" integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg" crossorigin="anonymous"></script>
+		</body>
+	</html>
+}
