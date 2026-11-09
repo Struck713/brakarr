@@ -1,0 +1,16 @@
+services:
+  brakarr:
+    build: .
+    restart: unless-stopped
+    user: "1000:1000"
+    group_add:
+      - render # use the numeric group ID if the name doesn't exist in the image
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    environment:
+      CRAWL_PATH: /data/media
+    volumes:
+      - ./config:/config
+      - /path/to/data:/data # match the path your *arr containers use
+    ports:
+      - "127.0.0.1:1323:1323" # the web UI has no authentication

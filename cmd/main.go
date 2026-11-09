@@ -17,7 +17,7 @@ import (
 	"github.com/Struck713/brakarr/internal/web"
 )
 
-//go:generate templ generate
+//go:generate templ generate -path ../internal/web/templates
 
 func main() {
 	if err := run(); err != nil {
