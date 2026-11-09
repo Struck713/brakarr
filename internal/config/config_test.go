@@ -68,3 +68,20 @@ func TestSkipHardlinkedDefaultsToTrue(t *testing.T) {
 		t.Error("SkipHardlinked = false, want true")
 	}
 }
+
+func TestDefaultExtensionsIncludeMKVAndMP4(t *testing.T) {
+	c, err := fromEnv(env(t, map[string]string{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.Extensions, ","); got != ".mkv,.mp4" {
+		t.Errorf("extensions = %q", got)
+	}
+}
+
+func TestUnsupportedExtensionIsAnError(t *testing.T) {
+	_, err := fromEnv(env(t, map[string]string{"CRAWL_EXTENSIONS": ".mkv,avi"}))
+	if err == nil || !strings.Contains(err.Error(), ".avi") {
+		t.Errorf("err = %v, want .avi error", err)
+	}
+}

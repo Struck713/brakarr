@@ -191,3 +191,13 @@ func TestHardlinkedSourceTranscodedWhenSkipDisabled(t *testing.T) {
 		t.Errorf("calls = %d, deferred = %v; want 1 call, none deferred", f.tc.calls, f.store.deferred)
 	}
 }
+
+func TestOutputKeepsSourceContainer(t *testing.T) {
+	for name, want := range map[string]string{"a.mp4": ".mp4", "b.MP4": ".mp4", "c.mkv": ".mkv"} {
+		f := newFixture(t, name, Options{})
+		f.pool.runNext(context.Background(), 0)
+		if got := filepath.Ext(f.tc.output); got != want {
+			t.Errorf("%s: output extension = %q, want %q", name, got, want)
+		}
+	}
+}

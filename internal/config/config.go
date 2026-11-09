@@ -93,13 +93,19 @@ func fromEnv(get func(string) string) (*Config, error) {
 		SkipHardlinked: boolean("SKIP_HARDLINKED", true),
 	}
 
-	for _, ext := range strings.Split(str("CRAWL_EXTENSIONS", ".mkv"), ",") {
+	// Do not add .m4v: ffmpeg treats that extension as a raw MPEG-4 stream.
+	// .avi is not suitable for HEVC.
+	for _, ext := range strings.Split(str("CRAWL_EXTENSIONS", ".mkv,.mp4"), ",") {
 		ext = strings.ToLower(strings.TrimSpace(ext))
 		if ext == "" {
 			continue
 		}
 		if !strings.HasPrefix(ext, ".") {
 			ext = "." + ext
+		}
+		if ext != ".mkv" && ext != ".mp4" {
+			errs = append(errs, fmt.Errorf("CRAWL_EXTENSIONS: %s is not supported (use .mkv or .mp4)", ext))
+			continue
 		}
 		c.Extensions = append(c.Extensions, ext)
 	}

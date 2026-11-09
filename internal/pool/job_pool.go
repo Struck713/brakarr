@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,7 +167,8 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 		// A stat error falls through: ffmpeg reports it and the job fails normally.
 	}
 
-	output := filepath.Join(p.opts.WorkDir, hex.EncodeToString(item.Hash)+".mkv")
+	ext := strings.ToLower(filepath.Ext(item.Path))
+	output := filepath.Join(p.opts.WorkDir, hex.EncodeToString(item.Hash)+ext)
 	os.Remove(output)
 
 	bitDepth, _ := strconv.Atoi(item.BitDepth) // unknown = treat as 8-bit
