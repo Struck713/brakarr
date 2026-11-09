@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +18,8 @@ import (
 type Store interface {
 	Get(ctx context.Context, hash []byte) (*media.Media, error)
 	Insert(ctx context.Context, m *media.Media) (bool, error)
+	Relocate(ctx context.Context, hash []byte, path, name string) error
+	Undefer(ctx context.Context, hash []byte) (bool, error)
 }
 
 type Options struct {
@@ -49,6 +52,9 @@ func New(store Store, opts Options) *Crawler {
 func (c *Crawler) Run(ctx context.Context) {
 	for {
 		c.scan(ctx)
+		if c.opts.Interval <= 0 {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -130,7 +136,7 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 		return false, err
 	}
 	if known != nil {
-		return false, nil
+		return c.reconcile(ctx, known, path, info)
 	}
 
 	m, err := c.probe(path, hash)
@@ -154,4 +160,25 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 		slog.Info("new media", "name", name, "hash", fmt.Sprintf("%x", hash), "format", m.Format, "status", m.Status)
 	}
 	return inserted && m.Status == media.StatusPending, nil
+}
+
+// reconcile updates a row whose content hash was seen before.
+func (c *Crawler) reconcile(ctx context.Context, known *media.Media, path string, info fs.FileInfo) (bool, error) {
+	if known.Status == media.StatusRunning {
+		return false, nil // handled on the next scan, once the job has finished
+	}
+	if known.Path != path {
+		if _, err := os.Stat(known.Path); !errors.Is(err, fs.ErrNotExist) {
+			return false, nil // the old path is still there, so this is a second copy
+		}
+		if err := c.store.Relocate(ctx, known.Hash, path, filepath.Base(path)); err != nil {
+			return false, err
+		}
+		slog.Info("media moved", "from", known.Path, "to", path)
+		return known.Status == media.StatusFailed, nil
+	}
+	if known.Status == media.StatusDeferred && (!c.opts.SkipHardlinked || media.LinkCount(info) <= 1) {
+		return c.store.Undefer(ctx, known.Hash)
+	}
+	return false, nil
 }

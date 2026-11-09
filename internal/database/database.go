@@ -112,6 +112,18 @@ func (d *Database) Undefer(ctx context.Context, hash []byte) (bool, error) {
 	return n > 0, err
 }
 
+// Relocate records a file's new path. A failed job gets one more try, since
+// the move is the most likely cause of the failure.
+func (d *Database) Relocate(ctx context.Context, hash []byte, path, name string) error {
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE files
+		SET path = ?, name = ?,
+		    error = CASE WHEN status = 'failed' THEN '' ELSE error END,
+		    status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END
+		WHERE hash = ?`, path, name, hash)
+	return err
+}
+
 func (d *Database) Release(ctx context.Context, hash []byte) error {
 	_, err := d.db.ExecContext(ctx,
 		`UPDATE files SET status = 'pending', attempts = MAX(attempts - 1, 0) WHERE hash = ?`, hash)
