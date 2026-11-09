@@ -2,25 +2,24 @@ package database
 
 import (
 	"database/sql"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
 	"path"
 )
 
-const MIGRATIONS_FOLDER = "./migrations"
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
 func migrate(db *sql.DB) error {
-
-	migratonFiles, err := os.ReadDir(MIGRATIONS_FOLDER)
+	entries, err := fs.ReadDir(migrationFS, "migrations") // sorted by filename
 	if err != nil {
 		return err
 	}
-
 	var migrations []string
-	for _, migrationFile := range migratonFiles {
-		absolutePath := path.Join(MIGRATIONS_FOLDER, migrationFile.Name())
-		content, err := os.ReadFile(absolutePath)
+	for _, entry := range entries {
+		content, err := migrationFS.ReadFile(path.Join("migrations", entry.Name()))
 		if err != nil {
 			return err
 		}

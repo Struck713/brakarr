@@ -104,6 +104,8 @@ templ statusBadge(item media.Media) {
 			<span class="badge bg-secondary" title={ item.Error }>Skipped</span>
 		case media.StatusComplete:
 			<span class="badge bg-success">Complete</span>
+		case media.StatusDeferred:
+			<span class="badge bg-secondary" title={ item.Error }>Waiting</span>
 		default:
 			<span class="badge bg-warning text-dark">Pending</span>
 	}
