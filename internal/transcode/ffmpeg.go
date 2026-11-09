@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,22 +32,30 @@ func (f *FFmpeg) Preflight() error {
 }
 
 func (f *FFmpeg) Args(input, output string, bitDepth int) []string {
-	profile := "main"
+	profile, swFormat := "main", "nv12"
 	if bitDepth > 8 {
-		profile = "main10"
+		profile, swFormat = "main10", "p010"
 	}
-	return []string{
+	args := []string{
 		"-nostdin", "-y",
-		"-hwaccel", "vaapi", "-hwaccel_device", f.Device,
+		"-init_hw_device", "vaapi=va:" + f.Device,
+		"-filter_hw_device", "va",
+		"-hwaccel", "vaapi", "-hwaccel_device", "va",
 		"-hwaccel_output_format", "vaapi",
 		"-i", input,
 		"-loglevel", "error",
 		"-nostats", "-progress", "pipe:1",
 		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?",
+		// Accepts hardware frames as they are, and uploads software frames
+		// when the GPU could not decode the source.
+		"-vf", "format=" + swFormat + "|vaapi,hwupload",
 		"-c:v", "hevc_vaapi", "-profile:v", profile, "-qp", strconv.Itoa(f.Quality),
 		"-c:a", "copy", "-c:s", "copy", "-c:t", "copy",
-		output,
 	}
+	if strings.EqualFold(filepath.Ext(output), ".mp4") {
+		args = append(args, "-tag:v", "hvc1") // required by Apple players
+	}
+	return append(args, output)
 }
 
 func (f *FFmpeg) Transcode(ctx context.Context, input, output string, bitDepth int, onProgress func(Progress)) error {
