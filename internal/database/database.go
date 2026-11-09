@@ -96,6 +96,22 @@ func (d *Database) Skip(ctx context.Context, hash []byte, reason string) error {
 	return err
 }
 
+func (d *Database) Defer(ctx context.Context, hash []byte, reason string) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE files SET status = 'deferred', error = ?, attempts = MAX(attempts - 1, 0) WHERE hash = ?`, reason, hash)
+	return err
+}
+
+func (d *Database) Undefer(ctx context.Context, hash []byte) (bool, error) {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE files SET status = 'pending', error = '' WHERE hash = ? AND status = 'deferred'`, hash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (d *Database) Release(ctx context.Context, hash []byte) error {
 	_, err := d.db.ExecContext(ctx,
 		`UPDATE files SET status = 'pending', attempts = MAX(attempts - 1, 0) WHERE hash = ?`, hash)

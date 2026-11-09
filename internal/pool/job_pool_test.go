@@ -163,3 +163,31 @@ func TestCleanWorkDirOnlyRemovesHashNamedFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestHardlinkedSourceIsDeferred(t *testing.T) {
+	f := newFixture(t, "movie.mkv", Options{SkipHardlinked: true})
+	if err := os.Link(f.src, f.src+".seed"); err != nil {
+		t.Skip("hardlinks not supported:", err)
+	}
+	f.pool.runNext(context.Background(), 0)
+	if len(f.store.deferred) != 1 {
+		t.Errorf("deferred = %v, want one entry", f.store.deferred)
+	}
+	if f.tc.calls != 0 {
+		t.Errorf("transcoder called %d times, want 0", f.tc.calls)
+	}
+	if got, _ := os.ReadFile(f.src); string(got) != "original original original" {
+		t.Errorf("source changed: %q", got)
+	}
+}
+
+func TestHardlinkedSourceTranscodedWhenSkipDisabled(t *testing.T) {
+	f := newFixture(t, "movie.mkv", Options{SkipHardlinked: false})
+	if err := os.Link(f.src, f.src+".seed"); err != nil {
+		t.Skip("hardlinks not supported:", err)
+	}
+	f.pool.runNext(context.Background(), 0)
+	if f.tc.calls != 1 || len(f.store.deferred) != 0 {
+		t.Errorf("calls = %d, deferred = %v; want 1 call, none deferred", f.tc.calls, f.store.deferred)
+	}
+}

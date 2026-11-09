@@ -25,6 +25,7 @@ type Store interface {
 	ClaimNext(ctx context.Context) (*media.Media, error)
 	RequeueRunning(ctx context.Context) error
 	Fail(ctx context.Context, hash []byte, reason string) error
+	Defer(ctx context.Context, hash []byte, reason string) error
 	Skip(ctx context.Context, hash []byte, reason string) error
 	Release(ctx context.Context, hash []byte) error
 	Replace(ctx context.Context, oldHash []byte, next *media.Media) error
@@ -35,8 +36,9 @@ type Transcoder interface {
 }
 
 type Options struct {
-	Workers int
-	WorkDir string
+	Workers        int
+	WorkDir        string
+	SkipHardlinked bool
 }
 
 type Pool struct {
@@ -151,6 +153,19 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 	p.setJob(id, job)
 	defer p.clearJob(id)
 
+	if p.opts.SkipHardlinked {
+		if st, err := os.Stat(item.Path); err == nil {
+			if links := media.LinkCount(st); links > 1 {
+				reason := fmt.Sprintf("hardlinked (%d links), waiting until only one remains", links)
+				if err := p.store.Defer(context.WithoutCancel(ctx), item.Hash, reason); err != nil {
+					slog.Error("pool: defer", "name", item.Name, "error", err)
+				}
+				return true
+			}
+		}
+		// A stat error falls through: ffmpeg reports it and the job fails normally.
+	}
+
 	output := filepath.Join(p.opts.WorkDir, hex.EncodeToString(item.Hash)+".mkv")
 	os.Remove(output)
 
@@ -257,7 +272,10 @@ func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output st
 
 func moveFile(src, dst string) error {
 	if st, err := os.Stat(dst); err == nil {
-		defer os.Chmod(dst, st.Mode().Perm())
+		defer func() {
+			media.CopyOwner(st, dst)
+			os.Chmod(dst, st.Mode().Perm())
+		}()
 	}
 	if err := os.Rename(src, dst); err == nil {
 		return nil

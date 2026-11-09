@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,30 @@ func TestLoadDotEnvStripsInlineComments(t *testing.T) {
 	}
 	if got := os.Getenv("BRAKARR_TEST_KEY"); got != "abc" {
 		t.Errorf("got %q, want abc", got)
+	}
+}
+
+func env(t *testing.T, kv map[string]string) func(string) string {
+	t.Helper()
+	if _, ok := kv["CRAWL_PATH"]; !ok {
+		kv["CRAWL_PATH"] = t.TempDir()
+	}
+	return func(k string) string { return kv[k] }
+}
+
+func TestInvalidBooleanIsAnError(t *testing.T) {
+	_, err := fromEnv(env(t, map[string]string{"SKIP_HARDLINKED": "maybe"}))
+	if err == nil || !strings.Contains(err.Error(), "SKIP_HARDLINKED") {
+		t.Errorf("err = %v, want SKIP_HARDLINKED error", err)
+	}
+}
+
+func TestSkipHardlinkedDefaultsToTrue(t *testing.T) {
+	c, err := fromEnv(env(t, map[string]string{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.SkipHardlinked {
+		t.Error("SkipHardlinked = false, want true")
 	}
 }

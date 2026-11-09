@@ -14,17 +14,18 @@ import (
 )
 
 type Config struct {
-	CrawlPath     string
-	Extensions    []string
-	CrawlInterval time.Duration
-	MinFileAge    time.Duration
-	WorkDir       string
-	DBPath        string
-	VaapiDevice   string
-	Quality       int
-	Workers       int
-	ListenAddr    string
-	LogLevel      slog.Level
+	CrawlPath      string
+	Extensions     []string
+	CrawlInterval  time.Duration
+	MinFileAge     time.Duration
+	WorkDir        string
+	DBPath         string
+	VaapiDevice    string
+	Quality        int
+	Workers        int
+	ListenAddr     string
+	SkipHardlinked bool
+	LogLevel       slog.Level
 }
 
 func Load() (*Config, error) {
@@ -78,18 +79,18 @@ func fromEnv(get func(string) string) (*Config, error) {
 		}
 		return b
 	}
-	_ = boolean
 
 	c := &Config{
-		CrawlPath:     str("CRAWL_PATH", ""),
-		CrawlInterval: duration("CRAWL_INTERVAL", 10*time.Minute),
-		MinFileAge:    duration("MIN_FILE_AGE", 30*time.Second),
-		WorkDir:       str("WORK_DIR", "./work"),
-		DBPath:        str("DB_PATH", "app.db"),
-		VaapiDevice:   str("VAAPI_DEVICE", "/dev/dri/renderD128"),
-		Quality:       integer("QUALITY", 22),
-		Workers:       integer("WORKERS", 1),
-		ListenAddr:    str("LISTEN_ADDR", "127.0.0.1:1323"),
+		CrawlPath:      str("CRAWL_PATH", ""),
+		CrawlInterval:  duration("CRAWL_INTERVAL", 10*time.Minute),
+		MinFileAge:     duration("MIN_FILE_AGE", 30*time.Second),
+		WorkDir:        str("WORK_DIR", "./work"),
+		DBPath:         str("DB_PATH", "app.db"),
+		VaapiDevice:    str("VAAPI_DEVICE", "/dev/dri/renderD128"),
+		Quality:        integer("QUALITY", 22),
+		Workers:        integer("WORKERS", 1),
+		ListenAddr:     str("LISTEN_ADDR", "127.0.0.1:1323"),
+		SkipHardlinked: boolean("SKIP_HARDLINKED", true),
 	}
 
 	for _, ext := range strings.Split(str("CRAWL_EXTENSIONS", ".mkv"), ",") {

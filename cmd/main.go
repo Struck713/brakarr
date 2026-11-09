@@ -47,8 +47,9 @@ func run() error {
 	defer db.Close()
 
 	jobs := pool.NewPool(db, ffmpeg, pool.Options{
-		Workers: cfg.Workers,
-		WorkDir: cfg.WorkDir,
+		Workers:        cfg.Workers,
+		WorkDir:        cfg.WorkDir,
+		SkipHardlinked: cfg.SkipHardlinked,
 	})
 	if err := jobs.Start(ctx); err != nil {
 		return err
@@ -56,11 +57,12 @@ func run() error {
 	defer jobs.Stop()
 
 	crawl := crawler.New(db, crawler.Options{
-		Root:       cfg.CrawlPath,
-		Extensions: cfg.Extensions,
-		Interval:   cfg.CrawlInterval,
-		MinAge:     cfg.MinFileAge,
-		OnNew:      jobs.Notify,
+		Root:           cfg.CrawlPath,
+		Extensions:     cfg.Extensions,
+		Interval:       cfg.CrawlInterval,
+		MinAge:         cfg.MinFileAge,
+		SkipHardlinked: cfg.SkipHardlinked,
+		OnNew:          jobs.Notify,
 	})
 	go crawl.Run(ctx)
 

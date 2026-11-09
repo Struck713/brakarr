@@ -20,11 +20,12 @@ type Store interface {
 }
 
 type Options struct {
-	Root       string
-	Extensions []string
-	Interval   time.Duration
-	MinAge     time.Duration
-	OnNew      func()
+	Root           string
+	Extensions     []string
+	Interval       time.Duration
+	MinAge         time.Duration
+	SkipHardlinked bool
+	OnNew          func()
 }
 
 type Crawler struct {

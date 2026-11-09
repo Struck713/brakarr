@@ -1,11 +1,14 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"io/fs"
 	"path"
 	"path/filepath"
 	"testing"
+
+	"github.com/Struck713/brakarr/internal/media"
 )
 
 func TestMigrationRequeuesNonHEVCComplete(t *testing.T) {
@@ -52,5 +55,39 @@ func TestMigrationRequeuesNonHEVCComplete(t *testing.T) {
 	}
 	if _, err := raw.Exec(`UPDATE files SET status = 'deferred' WHERE hash = x'01'`); err != nil {
 		t.Errorf("deferred status rejected: %v", err)
+	}
+}
+
+func TestDeferAndUndefer(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	m := &media.Media{Hash: []byte{7}, Name: "a.mkv", Path: "/a.mkv", Format: "AVC", BitDepth: "8", Size: 10, Duration: 1}
+	if _, err := db.Insert(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := db.ClaimNext(ctx)
+	if err != nil || claimed == nil || claimed.Attempts != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	if err := db.Defer(ctx, m.Hash, "hardlinked"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.Get(ctx, m.Hash)
+	if got.Status != media.StatusDeferred || got.Error != "hardlinked" || got.Attempts != 0 {
+		t.Errorf("after defer: %+v", got)
+	}
+	ok, err := db.Undefer(ctx, m.Hash)
+	if err != nil || !ok {
+		t.Fatalf("undefer = %v, %v", ok, err)
+	}
+	if got, _ = db.Get(ctx, m.Hash); got.Status != media.StatusPending || got.Error != "" {
+		t.Errorf("after undefer: %+v", got)
+	}
+	if ok, _ = db.Undefer(ctx, m.Hash); ok {
+		t.Error("undefer of a pending row reported a change")
 	}
 }
