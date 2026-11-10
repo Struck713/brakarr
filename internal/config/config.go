@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Struck713/brakarr/internal/arr"
@@ -33,12 +32,6 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// ArrApp holds the connection details of a Sonarr or Radarr instance.
-type ArrApp struct {
-	URL    string `json:"url"`
-	APIKey string `json:"apiKey"`
-}
-
 // Config is the application's user-editable configuration.
 type Config struct {
 	CrawlPath      string        `json:"crawlPath"`
@@ -55,8 +48,7 @@ type Config struct {
 	ListenAddr     string        `json:"listenAddr"`
 	SkipHardlinked bool          `json:"skipHardlinked"`
 	LogLevel       string        `json:"logLevel"`
-	Sonarr         ArrApp        `json:"sonarr"`
-	Radarr         ArrApp        `json:"radarr"`
+	Services       []Service     `json:"services"`
 	ArrPathMap     []arr.PathMap `json:"arrPathMap"`
 }
 
@@ -76,6 +68,7 @@ func Defaults() Config {
 		ListenAddr:     "127.0.0.1:1323",
 		SkipHardlinked: true,
 		LogLevel:       "info",
+		Services:       []Service{},
 		ArrPathMap:     []arr.PathMap{},
 	}
 }
@@ -89,18 +82,6 @@ func (c *Config) Level() slog.Level {
 	return l
 }
 
-// Apps returns the configured Sonarr and Radarr instances as arr.Apps.
-func (c *Config) Apps() []arr.App {
-	var apps []arr.App
-	if c.Sonarr.URL != "" {
-		apps = append(apps, arr.Sonarr(c.Sonarr.URL, c.Sonarr.APIKey))
-	}
-	if c.Radarr.URL != "" {
-		apps = append(apps, arr.Radarr(c.Radarr.URL, c.Radarr.APIKey))
-	}
-	return apps
-}
-
 // Normalize cleans up values such as whitespace and extension formatting.
 func (c *Config) Normalize() {
 	c.CrawlPath = strings.TrimSpace(c.CrawlPath)
@@ -109,8 +90,7 @@ func (c *Config) Normalize() {
 	c.VaapiDevice = strings.TrimSpace(c.VaapiDevice)
 	c.ListenAddr = strings.TrimSpace(c.ListenAddr)
 	c.LogLevel = strings.ToLower(strings.TrimSpace(c.LogLevel))
-	c.Sonarr = ArrApp{strings.TrimSpace(c.Sonarr.URL), strings.TrimSpace(c.Sonarr.APIKey)}
-	c.Radarr = ArrApp{strings.TrimSpace(c.Radarr.URL), strings.TrimSpace(c.Radarr.APIKey)}
+	c.normalizeServices()
 
 	exts := make([]string, 0, len(c.Extensions))
 	for _, ext := range c.Extensions {
@@ -186,20 +166,7 @@ func (c *Config) Validate() error {
 	if err := l.UnmarshalText([]byte(c.LogLevel)); err != nil {
 		errs = append(errs, fmt.Errorf("log level: %w", err))
 	}
-	for _, app := range []struct {
-		name string
-		ArrApp
-	}{{"Sonarr", c.Sonarr}, {"Radarr", c.Radarr}} {
-		if (app.URL == "") != (app.APIKey == "") {
-			errs = append(errs, fmt.Errorf("%s URL and API key must be set together", app.name))
-		}
-	}
-	for _, m := range c.ArrPathMap {
-		if m.Local == "" || m.Remote == "" {
-			errs = append(errs, errors.New("every path mapping needs both a Brakarr path and an app path"))
-			break
-		}
-	}
+	errs = append(errs, c.validateServices(), c.validatePathMap())
 	return errors.Join(errs...)
 }
 
@@ -215,9 +182,12 @@ func Read(path string) (Config, error) {
 	}
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
+	f := file{Config: c}
+	if err := dec.Decode(&f); err != nil {
 		return Defaults(), fmt.Errorf("%s: %w", path, err)
 	}
+	c = f.Config
+	c.migrate(f.legacy)
 	c.Normalize()
 	return c, nil
 }
@@ -238,50 +208,4 @@ func Write(path string, c Config) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// Store holds the current configuration in memory and persists changes to disk.
-type Store struct {
-	path string
-	mu   sync.RWMutex
-	cur  Config
-}
-
-// Open loads the configuration at path, creating it with defaults if needed.
-func Open(path string) (*Store, error) {
-	c, err := Read(path)
-	if err != nil {
-		return nil, err
-	}
-	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
-		if err := Write(path, c); err != nil {
-			return nil, err
-		}
-	}
-	return &Store{path: path, cur: c}, nil
-}
-
-// Path returns the file the configuration is stored in.
-func (s *Store) Path() string { return s.path }
-
-// Get returns a copy of the current configuration.
-func (s *Store) Get() Config {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cur
-}
-
-// Save validates, persists and applies a new configuration.
-func (s *Store) Save(c Config) error {
-	c.Normalize()
-	if err := c.Validate(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := Write(s.path, c); err != nil {
-		return err
-	}
-	s.cur = c
-	return nil
 }

@@ -1,0 +1,47 @@
+package templates
+
+import "fmt"
+
+templ textField(name, label, value, hint string) {
+	<div class="field">
+		<label for={ name }>{ label }</label>
+		<input id={ name } name={ name } type="text" value={ value } spellcheck="false" autocomplete="off"/>
+		if hint != "" {
+			<span class="hint">{ hint }</span>
+		}
+	</div>
+}
+
+templ numberField(name, label string, value int, hint string) {
+	<div class="field">
+		<label for={ name }>{ label }</label>
+		<input id={ name } name={ name } type="number" value={ fmt.Sprint(value) }/>
+		if hint != "" {
+			<span class="hint">{ hint }</span>
+		}
+	</div>
+}
+
+templ checkField(name, label string, checked bool, hint string) {
+	<div class="field">
+		<label class="check">
+			<input name={ name } type="checkbox" checked?={ checked }/>
+			{ label }
+		</label>
+		<span class="hint">{ hint }</span>
+	</div>
+}
+
+templ secretField(name, label string, set bool) {
+	<div class="field">
+		<label for={ name }>{ label }</label>
+		<input id={ name } name={ name } type="password" autocomplete="new-password" placeholder={ secretPlaceholder(set) }/>
+	</div>
+}
+
+func secretPlaceholder(set bool) string {
+	if set {
+		return "Saved. Leave blank to keep it."
+	}
+	return ""
+}

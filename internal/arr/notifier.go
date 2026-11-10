@@ -14,22 +14,6 @@ import (
 
 const flushInterval = time.Minute
 
-// App identifies a Sonarr or Radarr instance and its API.
-type App struct {
-	Name, BaseURL, APIKey      string
-	ListPath, Command, IDField string
-}
-
-// Sonarr returns an App for a Sonarr instance.
-func Sonarr(url, key string) App {
-	return App{"sonarr", strings.TrimRight(url, "/"), key, "/api/v3/series", "RescanSeries", "seriesId"}
-}
-
-// Radarr returns an App for a Radarr instance.
-func Radarr(url, key string) App {
-	return App{"radarr", strings.TrimRight(url, "/"), key, "/api/v3/movie", "RescanMovie", "movieId"}
-}
-
 // PathMap translates a local path prefix to the one used by the arr apps.
 type PathMap struct {
 	Local  string `json:"local"`

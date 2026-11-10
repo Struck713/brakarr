@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Struck713/brakarr/internal/arr"
 	"github.com/Struck713/brakarr/internal/config"
 	"github.com/Struck713/brakarr/internal/web/templates"
 	"github.com/labstack/echo/v5"
@@ -87,46 +86,6 @@ func (s *SettingsController) fromForm(c *echo.Context) (config.Config, error) {
 	cfg.LogLevel = text("logLevel")
 	cfg.DBPath = text("dbPath")
 
-	cfg.Sonarr.URL = text("sonarrUrl")
-	cfg.Radarr.URL = text("radarrUrl")
-	// Keys are never sent to the browser, so a blank field keeps the saved one.
-	if k := text("sonarrApiKey"); k != "" {
-		cfg.Sonarr.APIKey = k
-	}
-	if k := text("radarrApiKey"); k != "" {
-		cfg.Radarr.APIKey = k
-	}
-	if cfg.Sonarr.URL == "" {
-		cfg.Sonarr.APIKey = ""
-	}
-	if cfg.Radarr.URL == "" {
-		cfg.Radarr.APIKey = ""
-	}
-
-	cfg.ArrPathMap = nil
-	for _, line := range strings.Split(c.FormValue("arrPathMap"), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		local, remote, ok := strings.Cut(line, "=")
-		if !ok {
-			errs = append(errs, fmt.Errorf("path mapping %q must look like brakarr-path=app-path", strings.TrimSpace(line)))
-			continue
-		}
-		cfg.ArrPathMap = append(cfg.ArrPathMap, arr.PathMap{Local: local, Remote: remote})
-	}
-
 	cfg.Normalize()
 	return cfg, errors.Join(errs...)
-}
-
-// splitErrors flattens a joined error into one message per line.
-func splitErrors(err error) []string {
-	var out []string
-	for _, line := range strings.Split(err.Error(), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
 }
