@@ -14,7 +14,6 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
-// Controller registers its routes on the server.
 type Controller interface {
 	Register(e *echo.Echo)
 }

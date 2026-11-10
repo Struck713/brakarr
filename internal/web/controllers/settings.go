@@ -13,7 +13,6 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// SettingsController serves and persists the application settings.
 type SettingsController struct {
 	settings *config.Store
 }
@@ -49,8 +48,6 @@ func (s *SettingsController) Save(c *echo.Context) error {
 	return Render(c, status, templates.SettingsPage(view))
 }
 
-// settingsFromForm overlays the submitted form on the saved settings. The
-// returned config is always usable to redisplay the form.
 func (s *SettingsController) fromForm(c *echo.Context) (config.Config, error) {
 	cfg := s.settings.Get()
 	var errs []error

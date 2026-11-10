@@ -10,7 +10,6 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// ActivityController serves the running transcode jobs.
 type ActivityController struct {
 	pool *pool.Pool
 }

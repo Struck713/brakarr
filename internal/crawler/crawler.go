@@ -162,14 +162,13 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 	return inserted && m.Status == media.StatusPending, nil
 }
 
-// reconcile updates a row whose content hash was seen before.
 func (c *Crawler) reconcile(ctx context.Context, known *media.Media, path string, info fs.FileInfo) (bool, error) {
 	if known.Status == media.StatusRunning {
-		return false, nil // handled on the next scan, once the job has finished
+		return false, nil
 	}
 	if known.Path != path {
 		if _, err := os.Stat(known.Path); !errors.Is(err, fs.ErrNotExist) {
-			return false, nil // the old path is still there, so this is a second copy
+			return false, nil
 		}
 		if err := c.store.Relocate(ctx, known.Hash, path, filepath.Base(path)); err != nil {
 			return false, err

@@ -1,4 +1,3 @@
-// Package config loads and saves Brakarr's settings from a JSON file.
 package config
 
 import (
@@ -15,7 +14,6 @@ import (
 	"github.com/Struck713/brakarr/internal/arr"
 )
 
-// Duration is a time.Duration that is written in JSON as a string such as "10m".
 type Duration time.Duration
 
 func (d Duration) String() string { return time.Duration(d).String() }
@@ -31,7 +29,6 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// ArrApp is the connection to a Sonarr or Radarr instance.
 type ArrApp struct {
 	URL    string `json:"url"`
 	APIKey string `json:"apiKey"`
@@ -72,7 +69,6 @@ func Defaults() Config {
 	}
 }
 
-// Level returns the slog level named by LogLevel, or info if it is invalid.
 func (c *Config) Level() slog.Level {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(c.LogLevel)); err != nil {
@@ -81,7 +77,6 @@ func (c *Config) Level() slog.Level {
 	return l
 }
 
-// Apps returns the configured Sonarr and Radarr instances.
 func (c *Config) Apps() []arr.App {
 	var apps []arr.App
 	if c.Sonarr.URL != "" {
@@ -93,7 +88,6 @@ func (c *Config) Apps() []arr.App {
 	return apps
 }
 
-// Normalize trims whitespace and canonicalises extensions and path maps.
 func (c *Config) Normalize() {
 	c.CrawlPath = strings.TrimSpace(c.CrawlPath)
 	c.WorkDir = strings.TrimSpace(c.WorkDir)
@@ -129,7 +123,6 @@ func (c *Config) Normalize() {
 	c.ArrPathMap = maps
 }
 
-// Validate reports every problem with the settings at once.
 func (c *Config) Validate() error {
 	var errs []error
 	if c.CrawlPath == "" {
@@ -189,7 +182,6 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Read parses the file at path on top of the defaults. A missing file yields the defaults.
 func Read(path string) (Config, error) {
 	c := Defaults()
 	b, err := os.ReadFile(path)
@@ -208,7 +200,6 @@ func Read(path string) (Config, error) {
 	return c, nil
 }
 
-// Write atomically replaces the file at path.
 func Write(path string, c Config) error {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -226,14 +217,12 @@ func Write(path string, c Config) error {
 	return os.Rename(tmp, path)
 }
 
-// Store holds the settings file shared between startup and the settings page.
 type Store struct {
 	path string
 	mu   sync.RWMutex
 	cur  Config
 }
 
-// Open reads the settings file, creating it with the defaults if it does not exist.
 func Open(path string) (*Store, error) {
 	c, err := Read(path)
 	if err != nil {
@@ -255,7 +244,6 @@ func (s *Store) Get() Config {
 	return s.cur
 }
 
-// Save validates c and writes it to disk.
 func (s *Store) Save(c Config) error {
 	c.Normalize()
 	if err := c.Validate(); err != nil {

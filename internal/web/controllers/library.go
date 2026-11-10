@@ -14,14 +14,12 @@ import (
 
 const pageSize = 50
 
-// Store is the media persistence the library needs.
 type Store interface {
 	List(ctx context.Context, limit, offset int) ([]media.Media, error)
 	Count(ctx context.Context) (int, error)
 	Retry(ctx context.Context, hash []byte) (bool, error)
 }
 
-// LibraryController serves the media library and its retry action.
 type LibraryController struct {
 	db   Store
 	pool *pool.Pool

@@ -52,7 +52,6 @@ func run() error {
 	}
 	defer db.Close()
 
-	// An invalid configuration still serves the settings page so it can be fixed.
 	settingsErr := cfg.Validate()
 	if settingsErr != nil {
 		slog.Error("invalid settings: transcoding is disabled until they are fixed and brakarr is restarted",

@@ -75,7 +75,6 @@ func (n *Notifier) flush(ctx context.Context) {
 	}
 	for _, app := range n.apps {
 		if err := n.notify(ctx, app, paths); err != nil {
-			// Not retried: the app's own scheduled rescan will catch up.
 			slog.Warn("arr: notify failed", "app", app.Name, "error", err)
 		}
 	}
