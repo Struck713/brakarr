@@ -297,29 +297,28 @@ func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (ne
 
 // replaceOriginal swaps the source file for the transcoded output and updates the store.
 func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media) error {
-	// st, err := os.Stat(item.Path)
-	// if err != nil {
-	// 	return err
-	// }
-	// if item.Size > 0 && st.Size() != item.Size {
-	// 	return errors.New("source changed while transcoding")
-	// }
-	// if err := moveFile(output, item.Path); err != nil {
-	// 	return err
-	// }
-	// if p.opts.OnReplaced != nil {
-	// 	p.opts.OnReplaced(item.Path)
-	// }
+	st, err := os.Stat(item.Path)
+	if err != nil {
+		return err
+	}
+	if item.Size > 0 && st.Size() != item.Size {
+		return errors.New("source changed while transcoding")
+	}
+	if err := moveFile(output, item.Path); err != nil {
+		return err
+	}
+	if p.opts.OnReplaced != nil {
+		p.opts.OnReplaced(item.Path)
+	}
 
-	// hash, err := p.hash(item.Path)
-	// if err != nil {
-	// 	return fmt.Errorf("original replaced but re-hash failed: %w", err)
-	// }
-	// next.Hash, next.Path, next.Name = hash, item.Path, item.Name
-	// if err := p.store.Replace(ctx, item.Hash, next); err != nil {
-	// 	return fmt.Errorf("original replaced but database update failed: %w", err)
-	// }
-	// return nil
+	hash, err := p.hash(item.Path)
+	if err != nil {
+		return fmt.Errorf("original replaced but re-hash failed: %w", err)
+	}
+	next.Hash, next.Path, next.Name = hash, item.Path, item.Name
+	if err := p.store.Replace(ctx, item.Hash, next); err != nil {
+		return fmt.Errorf("original replaced but database update failed: %w", err)
+	}
 	return nil
 }
 
