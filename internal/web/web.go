@@ -24,12 +24,13 @@ type Web struct {
 	controllers []Controller
 }
 
-// NewWeb builds the web interface with its library, activity and settings controllers.
+// NewWeb builds the web interface with its library, activity, settings and services controllers.
 func NewWeb(db controllers.Store, pool *pool.Pool, settings *config.Store) *Web {
 	return &Web{controllers: []Controller{
 		controllers.NewLibraryController(db, pool),
 		controllers.NewActivityController(pool),
 		controllers.NewSettingsController(settings),
+		controllers.NewServicesController(settings),
 	}}
 }
 

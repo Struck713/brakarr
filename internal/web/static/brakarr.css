@@ -524,3 +524,114 @@ code {
 	filter: brightness(1.1);
 	outline: none;
 }
+
+a.button {
+	display: inline-block;
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-bottom: 16px;
+}
+
+.button-quiet {
+	border: 1px solid var(--border);
+	background: var(--raised);
+	color: var(--text-strong);
+}
+
+.button-danger {
+	background: var(--danger);
+	color: #fff;
+}
+
+/* Settings tabs */
+
+.tabs {
+	display: flex;
+	gap: 4px;
+	margin-bottom: 20px;
+	border-bottom: 1px solid var(--border);
+}
+
+.tabs a {
+	margin-bottom: -1px;
+	padding: 8px 16px;
+	border-bottom: 2px solid transparent;
+	font-weight: 500;
+	transition: color 0.1s;
+}
+
+.tabs a:hover,
+.tabs a:focus-visible {
+	color: var(--accent);
+	outline: none;
+}
+
+.tabs a[aria-current="page"] {
+	border-bottom-color: var(--accent);
+	color: var(--accent);
+}
+
+/* Service list */
+
+.service-list {
+	margin: 0 0 14px;
+	padding: 0;
+	list-style: none;
+}
+
+.service {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.service:last-child {
+	border-bottom: 0;
+}
+
+.service form {
+	margin: 0;
+}
+
+.service-info {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+}
+
+.service-name {
+	color: var(--text-strong);
+	font-weight: 500;
+}
+
+.service-name:hover {
+	color: var(--accent);
+}
+
+.service-info .hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.service-state {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.service-on {
+	color: var(--success);
+}
+
+@media (max-width: 768px) {
+	.service {
+		flex-wrap: wrap;
+	}
+}

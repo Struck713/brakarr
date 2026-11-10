@@ -1,0 +1,158 @@
+package templates
+
+import (
+	"strings"
+
+	"github.com/Struck713/brakarr/internal/arr"
+	"github.com/Struck713/brakarr/internal/config"
+)
+
+type ServicesView struct {
+	Services []config.Service
+	PathMap  []arr.PathMap
+	// MapText replaces the saved mappings in the textarea when MapTextSet is
+	// true, so a rejected submission keeps what the user typed.
+	MapText    string
+	MapTextSet bool
+	Path       string
+	Saved      bool
+	Errors     []string
+}
+
+type ServiceFormView struct {
+	Service config.Service
+	IsNew   bool
+	// KeySet is true when an API key is already saved for this service.
+	KeySet bool
+	Errors []string
+}
+
+func joinPathMap(v ServicesView) string {
+	if v.MapTextSet {
+		return v.MapText
+	}
+	lines := make([]string, 0, len(v.PathMap))
+	for _, m := range v.PathMap {
+		lines = append(lines, m.Local+"="+m.Remote)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func typeLabel(id string) string {
+	for _, t := range arr.Types() {
+		if t.ID == id {
+			return t.Label
+		}
+	}
+	return id
+}
+
+templ notices(saved bool, path string, errs []string) {
+	if saved {
+		<div class="notice notice-success">Saved to <code>{ path }</code>. Restart Brakarr for changes to take effect.</div>
+	}
+	if len(errs) > 0 {
+		<div class="notice notice-danger">
+			<ul>
+				for _, e := range errs {
+					<li>{ e }</li>
+				}
+			</ul>
+		</div>
+	}
+}
+
+templ ServicesPage(v ServicesView) {
+	@settingsLayout(tabServices) {
+		<div class="settings">
+			@notices(v.Saved, v.Path, v.Errors)
+			<fieldset>
+				<legend>Sonarr and Radarr</legend>
+				<p class="hint">Brakarr asks enabled services to rescan after a file is replaced, so their stored size and codec stay correct.</p>
+				if len(v.Services) == 0 {
+					<p class="hint">No services yet.</p>
+				} else {
+					<ul class="service-list">
+						for _, s := range v.Services {
+							<li class="service">
+								<div class="service-info">
+									<a class="service-name" href={ templ.SafeURL("/settings/services/" + s.ID) }>{ s.Name }</a>
+									<span class="hint">{ typeLabel(s.Type) } · <code>{ s.URL }</code></span>
+								</div>
+								if s.Enabled {
+									<span class="service-state service-on">Enabled</span>
+								} else {
+									<span class="service-state">Disabled</span>
+								}
+								<a class="button button-quiet" href={ templ.SafeURL("/settings/services/" + s.ID) }>Edit</a>
+								<form method="post" action={ templ.SafeURL("/settings/services/" + s.ID + "/delete") } onsubmit={ confirmDelete(s.Name) }>
+									<button class="button button-danger" type="submit">Delete</button>
+								</form>
+							</li>
+						}
+					</ul>
+				}
+				<div class="actions">
+					<a class="button" href="/settings/services/new">Add service</a>
+				</div>
+			</fieldset>
+			<form method="post" action="/settings/services/mappings">
+				<fieldset>
+					<legend>Path mappings</legend>
+					<div class="field">
+						<label for="arrPathMap">Mappings</label>
+						<textarea id="arrPathMap" name="arrPathMap" rows="3" spellcheck="false">{ joinPathMap(v) }</textarea>
+						<span class="hint">One <code>brakarr-path=app-path</code> per line, for when the apps see different paths than Brakarr. Applies to every service.</span>
+					</div>
+					<div class="actions">
+						<button class="button" type="submit">Save mappings</button>
+					</div>
+				</fieldset>
+			</form>
+		</div>
+	}
+}
+
+script confirmDelete(name string) {
+	if (!confirm("Delete " + name + "?")) { event.preventDefault(); }
+}
+
+templ ServiceFormPage(v ServiceFormView) {
+	@settingsLayout(tabServices) {
+		<form class="settings" method="post" action={ templ.SafeURL(serviceAction(v)) }>
+			@notices(false, "", v.Errors)
+			<fieldset>
+				<legend>
+					if v.IsNew {
+						Add service
+					} else {
+						Edit service
+					}
+				</legend>
+				@textField("name", "Name", v.Service.Name, "Shown in the list and in logs, such as Sonarr 4K.")
+				<div class="field">
+					<label for="type">Type</label>
+					<select id="type" name="type">
+						for _, t := range arr.Types() {
+							<option value={ t.ID } selected?={ t.ID == v.Service.Type }>{ t.Label }</option>
+						}
+					</select>
+				</div>
+				@textField("url", "URL", v.Service.URL, "http://sonarr:8989")
+				@secretField("apiKey", "API key", v.KeySet)
+				@checkField("enabled", "Enabled", v.Service.Enabled, "Disabled services are kept but not notified.")
+			</fieldset>
+			<div class="actions">
+				<button class="button" type="submit">Save</button>
+				<a class="button button-quiet" href="/settings/services">Cancel</a>
+			</div>
+		</form>
+	}
+}
+
+func serviceAction(v ServiceFormView) string {
+	if v.IsNew {
+		return "/settings/services"
+	}
+	return "/settings/services/" + v.Service.ID
+}
