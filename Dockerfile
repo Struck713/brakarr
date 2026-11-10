@@ -11,13 +11,16 @@ RUN CGO_ENABLED=1 go build -o /brakarr ./cmd
 # includes libvmaf plus VAAPI/QSV (it loads libva from the system at runtime). The shared
 # variant is used so ffmpeg and ffprobe share one copy of the libraries.
 FROM ubuntu:24.04 AS ffmpeg
-RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates
+# apt-get update is retried because Ubuntu mirrors occasionally serve inconsistent indexes mid-sync.
+RUN for i in 1 2 3 4 5; do apt-get update && break || { echo "apt-get update failed, retrying..."; sleep 10; }; done \
+    && apt-get install -y --no-install-recommends curl xz-utils ca-certificates
 RUN mkdir /ffmpeg && curl -fsSL https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz \
     | tar -xJ --strip-components=1 -C /ffmpeg \
     && rm -rf /ffmpeg/include /ffmpeg/doc /ffmpeg/man /ffmpeg/bin/ffplay /ffmpeg/lib/pkgconfig
 
 FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for i in 1 2 3 4 5; do apt-get update && break || { echo "apt-get update failed, retrying..."; sleep 10; }; done \
+    && apt-get install -y --no-install-recommends \
     libmediainfo0v5 mesa-va-drivers intel-media-va-driver libva2 libva-drm2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ffmpeg /ffmpeg /opt/ffmpeg
