@@ -4,6 +4,7 @@ package templates
 const (
 	navLibrary  = "library"
 	navActivity = "activity"
+	navSettings = "settings"
 )
 
 func currentPage(active bool) templ.Attributes {
@@ -40,6 +41,7 @@ templ layout(active, title string) {
 				<nav class="sidebar" aria-label="Main" hx-boost="true">
 					@navLink("/", "library", "Library", active == navLibrary)
 					@navLink("/activity", "activity", "Activity", active == navActivity)
+					@navLink("/settings", "settings", "Settings", active == navSettings)
 				</nav>
 				<main class="content">
 					<div class="toolbar">
@@ -73,6 +75,9 @@ templ icon(name string) {
 				<path d="M8 4v16M16 4v16M3 9h5M3 15h5M16 9h5M16 15h5"></path>
 			case "activity":
 				<path d="M3 12h4l3-8 4 16 3-8h4"></path>
+			case "settings":
+				<circle cx="12" cy="12" r="3"></circle>
+				<path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path>
 			case "check":
 				<path d="M5 13l4 4L19 7"></path>
 			case "x":

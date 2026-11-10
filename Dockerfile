@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg libmediainfo0v5 mesa-va-drivers intel-media-va-driver ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /brakarr /usr/local/bin/brakarr
-ENV WORK_DIR=/config/work DB_PATH=/config/app.db LISTEN_ADDR=0.0.0.0:1323
 WORKDIR /config
 EXPOSE 1323
 ENTRYPOINT ["brakarr"]
+# Settings are edited on the Settings page and stored in /config/config.json.
+CMD ["-config", "/config/config.json", "-listen", "0.0.0.0:1323"]

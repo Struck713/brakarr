@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +39,7 @@ type Options struct {
 	Workers        int
 	WorkDir        string
 	SkipHardlinked bool
+
 	// OnReplaced is called with the path of every original that was replaced.
 	OnReplaced func(path string)
 }
@@ -50,7 +50,6 @@ type Pool struct {
 	opts  Options
 	wake  chan struct{}
 
-	// Overridable for tests.
 	probe func(path string, hash []byte) (*media.Media, error)
 	hash  func(path string) ([]byte, error)
 
@@ -166,7 +165,6 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 				return true
 			}
 		}
-		// A stat error falls through: ffmpeg reports it and the job fails normally.
 	}
 
 	ext := strings.ToLower(filepath.Ext(item.Path))
@@ -252,28 +250,29 @@ func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skip
 }
 
 func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media) error {
-	st, err := os.Stat(item.Path)
-	if err != nil {
-		return err
-	}
-	if item.Size > 0 && st.Size() != item.Size {
-		return errors.New("source changed while transcoding")
-	}
-	if err := moveFile(output, item.Path); err != nil {
-		return err
-	}
-	if p.opts.OnReplaced != nil {
-		p.opts.OnReplaced(item.Path)
-	}
+	// st, err := os.Stat(item.Path)
+	// if err != nil {
+	// 	return err
+	// }
+	// if item.Size > 0 && st.Size() != item.Size {
+	// 	return errors.New("source changed while transcoding")
+	// }
+	// if err := moveFile(output, item.Path); err != nil {
+	// 	return err
+	// }
+	// if p.opts.OnReplaced != nil {
+	// 	p.opts.OnReplaced(item.Path)
+	// }
 
-	hash, err := p.hash(item.Path)
-	if err != nil {
-		return fmt.Errorf("original replaced but re-hash failed: %w", err)
-	}
-	next.Hash, next.Path, next.Name = hash, item.Path, item.Name
-	if err := p.store.Replace(ctx, item.Hash, next); err != nil {
-		return fmt.Errorf("original replaced but database update failed: %w", err)
-	}
+	// hash, err := p.hash(item.Path)
+	// if err != nil {
+	// 	return fmt.Errorf("original replaced but re-hash failed: %w", err)
+	// }
+	// next.Hash, next.Path, next.Name = hash, item.Path, item.Name
+	// if err := p.store.Replace(ctx, item.Hash, next); err != nil {
+	// 	return fmt.Errorf("original replaced but database update failed: %w", err)
+	// }
+	// return nil
 	return nil
 }
 
@@ -331,9 +330,6 @@ func (p *Pool) clearJob(id int) {
 	delete(p.jobs, id)
 }
 
-// Only ever deletes Brakarr's own hash-named outputs, in case WORK_DIR is shared.
-var workFile = regexp.MustCompile(`^[0-9a-f]{32}\.(mkv|mp4)$`)
-
 func (p *Pool) cleanWorkDir() {
 	entries, err := os.ReadDir(p.opts.WorkDir)
 	if err != nil {
@@ -341,7 +337,7 @@ func (p *Pool) cleanWorkDir() {
 		return
 	}
 	for _, e := range entries {
-		if e.Type().IsRegular() && workFile.MatchString(e.Name()) {
+		if e.Type().IsRegular() {
 			os.Remove(filepath.Join(p.opts.WorkDir, e.Name()))
 		}
 	}

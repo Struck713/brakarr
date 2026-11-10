@@ -1,4 +1,3 @@
-// Package arr tells Sonarr and Radarr when Brakarr has replaced a file.
 package arr
 
 import (
@@ -28,7 +27,10 @@ func Radarr(url, key string) App {
 	return App{"radarr", strings.TrimRight(url, "/"), key, "/api/v3/movie", "RescanMovie", "movieId"}
 }
 
-type PathMap struct{ Local, Remote string }
+type PathMap struct {
+	Local  string `json:"local"`
+	Remote string `json:"remote"`
+}
 
 type Notifier struct {
 	apps   []App
@@ -44,7 +46,6 @@ func NewNotifier(apps []App, maps []PathMap) *Notifier {
 		client: &http.Client{Timeout: 30 * time.Second}, pending: map[string]struct{}{}}
 }
 
-// Replaced records that path changed. It never blocks a transcode worker.
 func (n *Notifier) Replaced(path string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

@@ -429,3 +429,98 @@ code {
 	clip-path: inset(50%);
 	white-space: nowrap;
 }
+
+.settings {
+	max-width: 640px;
+}
+
+.settings fieldset {
+	margin: 0 0 20px;
+	padding: 12px 16px 4px;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+}
+
+.settings legend {
+	padding: 0 6px;
+	color: var(--text-strong);
+	font-weight: 500;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 14px;
+}
+
+.field input[type="text"],
+.field input[type="number"],
+.field input[type="password"],
+.field select,
+.field textarea {
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	background: var(--raised);
+	color: var(--text-strong);
+	font: inherit;
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+	border-color: var(--accent);
+	outline: none;
+}
+
+.check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.hint {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.notice {
+	margin-bottom: 20px;
+	padding: 10px 14px;
+	border: 1px solid var(--border);
+	border-left-width: 3px;
+	border-radius: 3px;
+	background: var(--toolbar);
+}
+
+.notice ul {
+	margin: 0;
+	padding-left: 18px;
+}
+
+.notice-success {
+	border-left-color: var(--success);
+}
+
+.notice-danger {
+	border-left-color: var(--danger);
+}
+
+.button {
+	padding: 7px 18px;
+	border: 0;
+	border-radius: 3px;
+	background: var(--accent);
+	color: #1c1c1c;
+	font: inherit;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.button:hover,
+.button:focus-visible {
+	filter: brightness(1.1);
+	outline: none;
+}
