@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,19 +15,25 @@ import (
 	"github.com/Struck713/brakarr/internal/media"
 )
 
+// Store is the persistence the crawler needs to track discovered media.
 type Store interface {
 	Get(ctx context.Context, hash []byte) (*media.Media, error)
 	Insert(ctx context.Context, m *media.Media) (bool, error)
+	Relocate(ctx context.Context, hash []byte, path, name string) error
+	Undefer(ctx context.Context, hash []byte) (bool, error)
 }
 
+// Options configures a Crawler.
 type Options struct {
-	Root       string
-	Extensions []string
-	Interval   time.Duration
-	MinAge     time.Duration
-	OnNew      func()
+	Root           string
+	Extensions     []string
+	Interval       time.Duration
+	MinAge         time.Duration
+	SkipHardlinked bool
+	OnNew          func()
 }
 
+// Crawler periodically scans a directory tree and records new media files.
 type Crawler struct {
 	store Store
 	opts  Options
@@ -35,6 +42,7 @@ type Crawler struct {
 	now   func() time.Time
 }
 
+// New creates a Crawler that records media in store.
 func New(store Store, opts Options) *Crawler {
 	return &Crawler{
 		store: store,
@@ -45,9 +53,13 @@ func New(store Store, opts Options) *Crawler {
 	}
 }
 
+// Run scans immediately and then on every interval until ctx is cancelled.
 func (c *Crawler) Run(ctx context.Context) {
 	for {
 		c.scan(ctx)
+		if c.opts.Interval <= 0 {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -56,6 +68,7 @@ func (c *Crawler) Run(ctx context.Context) {
 	}
 }
 
+// scan walks the root directory once and handles every matching file.
 func (c *Crawler) scan(ctx context.Context) {
 	slog.Info("crawl started", "root", c.opts.Root)
 	added := 0
@@ -104,10 +117,12 @@ func (c *Crawler) scan(ctx context.Context) {
 	}
 }
 
+// wanted reports whether the path has one of the configured extensions.
 func (c *Crawler) wanted(path string) bool {
 	return slices.Contains(c.opts.Extensions, strings.ToLower(filepath.Ext(path)))
 }
 
+// handle hashes and probes a file, inserting it if new; it reports whether a pending job was added.
 func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool, error) {
 	info, err := d.Info()
 	if err != nil {
@@ -129,7 +144,7 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 		return false, err
 	}
 	if known != nil {
-		return false, nil
+		return c.reconcile(ctx, known, path, info)
 	}
 
 	m, err := c.probe(path, hash)
@@ -153,4 +168,25 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 		slog.Info("new media", "name", name, "hash", fmt.Sprintf("%x", hash), "format", m.Format, "status", m.Status)
 	}
 	return inserted && m.Status == media.StatusPending, nil
+}
+
+// reconcile updates the record of an already known file, handling moves and un-deferral.
+func (c *Crawler) reconcile(ctx context.Context, known *media.Media, path string, info fs.FileInfo) (bool, error) {
+	if known.Status == media.StatusRunning {
+		return false, nil
+	}
+	if known.Path != path {
+		if _, err := os.Stat(known.Path); !errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		if err := c.store.Relocate(ctx, known.Hash, path, filepath.Base(path)); err != nil {
+			return false, err
+		}
+		slog.Info("media moved", "from", known.Path, "to", path)
+		return known.Status == media.StatusFailed, nil
+	}
+	if known.Status == media.StatusDeferred && (!c.opts.SkipHardlinked || media.LinkCount(info) <= 1) {
+		return c.store.Undefer(ctx, known.Hash)
+	}
+	return false, nil
 }

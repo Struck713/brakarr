@@ -1,10 +1,13 @@
 package templates
 
-import "fmt"
-import "github.com/Struck713/brakarr/internal/pool"
-import "github.com/Struck713/brakarr/internal/transcode"
-import "github.com/Struck713/brakarr/internal/media"
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/Struck713/brakarr/internal/media"
+	"github.com/Struck713/brakarr/internal/pool"
+	"github.com/Struck713/brakarr/internal/transcode"
+)
 
 func formatBytes(size int64) string {
 	const unit = 1024
@@ -22,73 +25,81 @@ func formatBytes(size int64) string {
 }
 
 templ ActiveJobs(jobs []*pool.Job) {
-	if (len(jobs) <= 0) {
-		<div class="card">
-			<div class="card-body text-muted">No active jobs.</div>
-		</div>
+	if len(jobs) == 0 {
+		<div class="empty">No active transcodes.</div>
 	} else {
-		<div class="d-flex justify-content-between align-items-start gap-3">
-			for _, job := range jobs {
-				@activeJob(job.Media, job.Progress())
-			}
+		<div class="table-wrap">
+			<table class="table">
+				<thead>
+					<tr>
+						<th scope="col" class="col-icon"><span class="sr-only">State</span></th>
+						<th scope="col">Title</th>
+						<th scope="col">Format</th>
+						<th scope="col">Encoded</th>
+						<th scope="col">Speed</th>
+						<th scope="col">FPS</th>
+						<th scope="col">Frame</th>
+						<th scope="col">Bitrate</th>
+						<th scope="col">Output</th>
+						<th scope="col">Duplicate</th>
+						<th scope="col">Dropped</th>
+						<th scope="col">Progress</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, job := range jobs {
+						@jobRow(job.Media, job.Progress())
+					}
+				</tbody>
+			</table>
 		</div>
 	}
 }
 
-templ activeJob(media *media.Media, status *transcode.Progress) {
-	<div class="card">
-		<div class="card-body">
-			<div class="d-flex justify-content-between align-items-start gap-3">
-				<div>
-					<h3 class="h6 mb-1">{ media.Name }</h3>
-					<small class="text-muted">{ media.Format } · { media.BitDepth }-bit</small>
-				</div>
-				@jobBadge(status)
-			</div>
-			if status != nil {
-				if media.Duration > 0 {
-					@jobProgress(status.Percent(media.Duration))
+templ jobRow(item *media.Media, status *transcode.Progress) {
+	<tr>
+		@jobIcon(status)
+		<td class="col-title" title={ item.Path }>{ item.Name }</td>
+		<td>{ item.Format } · { item.BitDepth }-bit</td>
+		if status == nil {
+			<td class="muted" colspan="9">Starting…</td>
+		} else {
+			<td>{ status.OutTime }</td>
+			<td>{ status.Speed }</td>
+			<td>{ fmt.Sprintf("%.1f", status.Fps) }</td>
+			<td>{ strconv.FormatInt(status.Frame, 10) }</td>
+			<td>{ status.Bitrate }</td>
+			<td>{ formatBytes(status.TotalSize) }</td>
+			<td>{ strconv.FormatInt(status.DupFrames, 10) }</td>
+			<td>{ strconv.FormatInt(status.DropFrames, 10) }</td>
+			<td class="col-progress">
+				if item.Duration > 0 {
+					@jobProgress(status.Percent(item.Duration))
 				}
-				<dl class="row row-cols-2 row-cols-md-4 g-3 mt-2 mb-0">
-					@stat("Encoded time", status.OutTime)
-					@stat("Speed", status.Speed)
-					@stat("FPS", fmt.Sprintf("%.1f", status.Fps))
-					@stat("Frame", strconv.FormatInt(status.Frame, 10))
-					@stat("Bitrate", status.Bitrate)
-					@stat("Output size", formatBytes(status.TotalSize))
-					@stat("Duplicate frames", strconv.FormatInt(status.DupFrames, 10))
-					@stat("Dropped frames", strconv.FormatInt(status.DropFrames, 10))
-				</dl>
-			}
-		</div>
-	</div>
+			</td>
+		}
+	</tr>
 }
 
-templ jobBadge(status *transcode.Progress) {
+templ jobIcon(status *transcode.Progress) {
 	if status == nil {
-		<span class="badge bg-secondary">Starting</span>
+		<td class="col-icon status-warning" title="Starting">
+			@icon("clock")
+		</td>
 	} else if status.Done {
-		<span class="badge bg-success">Done</span>
+		<td class="col-icon status-success" title="Done">
+			@icon("check")
+		</td>
 	} else {
-		<span class="badge bg-primary">Transcoding</span>
+		<td class="col-icon status-info" title="Transcoding">
+			@icon("play")
+		</td>
 	}
 }
 
 templ jobProgress(percent float64) {
-	<div class="d-flex align-items-center gap-2 mt-3">
-		<progress
-			class="flex-grow-1"
-			max="100"
-			value={ fmt.Sprintf("%.1f", percent) }
-			aria-label="Transcode progress"
-		></progress>
-		<small class="text-muted">{ fmt.Sprintf("%.1f%%", percent) }</small>
-	</div>
-}
-
-templ stat(label, value string) {
-	<div class="col">
-		<dt class="small text-muted fw-normal">{ label }</dt>
-		<dd class="mb-0">{ value }</dd>
+	<div class="progress">
+		<progress max="100" value={ fmt.Sprintf("%.1f", percent) } aria-label="Transcode progress"></progress>
+		<span class="muted">{ fmt.Sprintf("%.1f%%", percent) }</span>
 	</div>
 }

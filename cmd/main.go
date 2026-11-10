@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/Struck713/brakarr/internal/arr"
 	"github.com/Struck713/brakarr/internal/config"
 	"github.com/Struck713/brakarr/internal/crawler"
 	"github.com/Struck713/brakarr/internal/database"
@@ -16,8 +19,9 @@ import (
 	"github.com/Struck713/brakarr/internal/web"
 )
 
-//go:generate templ generate
+//go:generate templ generate -path ../internal/web/templates
 
+// main runs the application and exits non-zero on error.
 func main() {
 	if err := run(); err != nil {
 		slog.Error("brakarr exited", "error", err)
@@ -25,20 +29,24 @@ func main() {
 	}
 }
 
+// run wires up the application's components and blocks until shutdown.
 func run() error {
-	cfg, err := config.Load()
+	configPath := flag.String("config", "config.json", "path to the JSON settings file")
+	listen := flag.String("listen", "", "override the listen address from the settings file")
+	flag.Parse()
+
+	store, err := config.Open(*configPath)
 	if err != nil {
 		return err
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
+	cfg := store.Get()
+	if *listen != "" {
+		cfg.ListenAddr = *listen
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.Level()})))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	ffmpeg := transcode.NewFFmpeg(cfg.VaapiDevice, cfg.Quality)
-	if err := ffmpeg.Preflight(); err != nil {
-		return err
-	}
 
 	db, err := database.Open(cfg.DBPath)
 	if err != nil {
@@ -46,29 +54,59 @@ func run() error {
 	}
 	defer db.Close()
 
-	jobs := pool.NewPool(db, ffmpeg, pool.Options{
-		Workers:          cfg.Workers,
-		WorkDir:          cfg.WorkDir,
-		ReplaceOriginals: cfg.ReplaceOriginals,
-	})
-	if err := jobs.Start(ctx); err != nil {
-		return err
+	settingsErr := cfg.Validate()
+	if settingsErr != nil {
+		slog.Error("invalid settings: transcoding is disabled until they are fixed and brakarr is restarted",
+			"file", store.Path(), "error", settingsErr)
 	}
-	defer jobs.Stop()
 
-	crawl := crawler.New(db, crawler.Options{
-		Root:       cfg.CrawlPath,
-		Extensions: cfg.Extensions,
-		Interval:   cfg.CrawlInterval,
-		MinAge:     cfg.MinFileAge,
-		OnNew:      jobs.Notify,
-	})
-	go crawl.Run(ctx)
+	ffmpeg := transcode.NewFFmpeg(cfg.VaapiDevice, cfg.Quality)
+	poolOpts := pool.Options{
+		Workers:        cfg.Workers,
+		WorkDir:        cfg.WorkDir,
+		SkipHardlinked: cfg.SkipHardlinked,
+		MinVMAF:        float64(cfg.MinVMAF),
+		VMAFSamples:    cfg.VMAFSamples,
+	}
+	if cfg.MinVMAF > 0 {
+		poolOpts.Scorer = ffmpeg
+	}
+	if apps := cfg.Apps(); settingsErr == nil && len(apps) > 0 {
+		notifier := arr.NewNotifier(apps, cfg.ArrPathMap)
+		poolOpts.OnReplaced = notifier.Replaced
+		go notifier.Run(ctx)
+	}
+	jobs := pool.NewPool(db, ffmpeg, poolOpts)
+
+	if settingsErr == nil {
+		if err := ffmpeg.Preflight(); err != nil {
+			return err
+		}
+		if cfg.MinVMAF > 0 {
+			if err := ffmpeg.PreflightVMAF(); err != nil {
+				return err
+			}
+		}
+		if err := jobs.Start(ctx); err != nil {
+			return err
+		}
+		defer jobs.Stop()
+
+		crawl := crawler.New(db, crawler.Options{
+			Root:           cfg.CrawlPath,
+			Extensions:     cfg.Extensions,
+			Interval:       time.Duration(cfg.CrawlInterval),
+			MinAge:         time.Duration(cfg.MinFileAge),
+			SkipHardlinked: cfg.SkipHardlinked,
+			OnNew:          jobs.Notify,
+		})
+		go crawl.Run(ctx)
+	}
 
 	slog.Info("brakarr started", "listen", cfg.ListenAddr, "crawl", cfg.CrawlPath,
-		"workers", cfg.Workers, "replace_originals", cfg.ReplaceOriginals)
+		"workers", cfg.Workers, "config", store.Path())
 
-	server := web.NewWeb(db, jobs)
+	server := web.NewWeb(db, jobs, store)
 	if err := server.Run(ctx, cfg.ListenAddr); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
