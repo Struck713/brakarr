@@ -15,9 +15,9 @@ RUN mkdir /ffmpeg && wget -qO- https://github.com/BtbN/FFmpeg-Builds/releases/do
     | tar -xJ --strip-components=1 -C /ffmpeg \
     && rm -rf /ffmpeg/include /ffmpeg/doc /ffmpeg/man /ffmpeg/bin/ffplay /ffmpeg/lib/pkgconfig
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmediainfo0v5 mesa-va-drivers intel-media-va-driver libva2 libva-drm2 ca-certificates \
+    libmediainfo0v5 mesa-va-drivers intel-media-va-driver-non-free libva2 libva-drm2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ffmpeg /ffmpeg /opt/ffmpeg
 ENV PATH=/opt/ffmpeg/bin:$PATH LD_LIBRARY_PATH=/opt/ffmpeg/lib
