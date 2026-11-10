@@ -37,11 +37,23 @@ type Transcoder interface {
 	Transcode(ctx context.Context, input, output string, bitDepth int, onProgress func(transcode.Progress)) error
 }
 
+// Scorer measures how visually close a transcoded file is to its source.
+type Scorer interface {
+	// Score returns a VMAF score from 0 to 100, comparing samples segments of the two files.
+	Score(ctx context.Context, source, output string, durationUs int64, bitDepth, samples int) (float64, error)
+}
+
 // Options configures a Pool.
 type Options struct {
 	Workers        int
 	WorkDir        string
 	SkipHardlinked bool
+
+	// Scorer and MinVMAF enable the quality check: outputs scoring below MinVMAF are
+	// discarded and the original is kept. A nil Scorer or zero MinVMAF disables it.
+	Scorer      Scorer
+	MinVMAF     float64
+	VMAFSamples int
 
 	// OnReplaced is called with the path of every original that was replaced.
 	OnReplaced func(path string)
@@ -198,7 +210,7 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 		os.Remove(output)
 		p.fail(dbCtx, item, fmt.Errorf("transcode: %w", err))
 	default:
-		p.finish(dbCtx, item, output)
+		p.finish(ctx, dbCtx, item, output)
 	}
 	return true
 }
@@ -212,9 +224,17 @@ func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 }
 
 // finish verifies the transcoded output and replaces the original, failing or skipping as needed.
-func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
-	next, skipReason, err := p.verify(item, output)
+// jobCtx bounds the long-running quality check; ctx is for the short store updates.
+func (p *Pool) finish(jobCtx, ctx context.Context, item *media.Media, output string) {
+	next, skipReason, err := p.verify(jobCtx, item, output)
 	switch {
+	case err != nil && jobCtx.Err() != nil:
+		// Shutdown interrupted the quality check; try again on the next start.
+		os.Remove(output)
+		if err := p.store.Release(ctx, item.Hash); err != nil {
+			slog.Error("pool: requeue after shutdown", "name", item.Name, "error", err)
+		}
+		return
 	case err != nil:
 		os.Remove(output)
 		p.fail(ctx, item, fmt.Errorf("verify output: %w", err))
@@ -236,8 +256,9 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 	slog.Info("pool: replaced original", "name", item.Name, "before", item.Size, "after", next.Size)
 }
 
-// verify probes the output and checks it is valid HEVC of matching duration and smaller than the source.
-func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skipReason string, err error) {
+// verify probes the output and checks it is valid HEVC of matching duration, smaller than the
+// source, and (when enabled) visually close enough to it.
+func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (next *media.Media, skipReason string, err error) {
 	next, err = p.probe(output, nil)
 	if err != nil {
 		return nil, "", err
@@ -259,6 +280,17 @@ func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skip
 	}
 	if item.Size > 0 && next.Size >= item.Size {
 		return nil, fmt.Sprintf("output not smaller (%d >= %d bytes)", next.Size, item.Size), nil
+	}
+	if p.opts.Scorer != nil && p.opts.MinVMAF > 0 {
+		bitDepth, _ := strconv.Atoi(item.BitDepth)
+		score, err := p.opts.Scorer.Score(ctx, item.Path, output, next.Duration, bitDepth, p.opts.VMAFSamples)
+		if err != nil {
+			return nil, "", fmt.Errorf("measure quality: %w", err)
+		}
+		slog.Info("pool: quality check", "name", item.Name, "vmaf", score, "min", p.opts.MinVMAF)
+		if score < p.opts.MinVMAF {
+			return nil, fmt.Sprintf("quality too low (VMAF %.1f < %.0f)", score, p.opts.MinVMAF), nil
+		}
 	}
 	return next, "", nil
 }

@@ -79,6 +79,8 @@ func (s *SettingsController) fromForm(c *echo.Context) (config.Config, error) {
 	cfg.SkipHardlinked = c.FormValue("skipHardlinked") != ""
 	cfg.VaapiDevice = text("vaapiDevice")
 	integer("quality", "quality", &cfg.Quality)
+	integer("minVmaf", "minimum VMAF", &cfg.MinVMAF)
+	integer("vmafSamples", "VMAF samples", &cfg.VMAFSamples)
 	integer("workers", "workers", &cfg.Workers)
 	cfg.WorkDir = text("workDir")
 	cfg.ListenAddr = text("listenAddr")

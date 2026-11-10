@@ -15,7 +15,7 @@ import (
 // FFmpeg transcodes video to HEVC using the ffmpeg binary.
 type FFmpeg struct {
 	Device  string
-	Quality int
+	Quality int // ICQ quality target, 1-51, lower is better
 }
 
 // NewFFmpeg creates an FFmpeg transcoder for the given device and quality.
@@ -53,7 +53,7 @@ func (f *FFmpeg) Args(input, output string, bitDepth int) []string {
 		// Accepts hardware frames as they are, and uploads software frames
 		// when the GPU could not decode the source.
 		"-vf", "format=" + swFormat + "|vaapi,hwupload",
-		"-c:v", "hevc_vaapi", "-profile:v", profile, "-qp", strconv.Itoa(f.Quality),
+		"-c:v", "hevc_vaapi", "-profile:v", profile, "-rc_mode", "ICQ", "-global_quality", strconv.Itoa(f.Quality),
 		"-c:a", "copy", "-c:s", "copy", "-c:t", "copy",
 	}
 	if strings.EqualFold(filepath.Ext(output), ".mp4") {

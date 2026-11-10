@@ -50,7 +50,9 @@ templ SettingsPage(v SettingsView) {
 			<fieldset>
 				<legend>Transcoding</legend>
 				@textField("vaapiDevice", "VAAPI device", v.Config.VaapiDevice, "")
-				@numberField("quality", "Quality", v.Config.Quality, "HEVC QP, 0-51 (lower is better quality).")
+				@numberField("quality", "Quality", v.Config.Quality, "HEVC ICQ target, 1-51 (lower is better quality and a larger file). Around 21-26 is a good range.")
+				@numberField("minVmaf", "Minimum VMAF", v.Config.MinVMAF, "Keep the original when the transcode scores below this against it (0-100, about 94 is visually clean). 0 disables the check.")
+				@numberField("vmafSamples", "VMAF samples", v.Config.VMAFSamples, "Number of 20 second segments compared per file. More is more thorough but slower.")
 				@numberField("workers", "Workers", v.Config.Workers, "Simultaneous transcodes.")
 				@textField("workDir", "Work directory", v.Config.WorkDir, "Where transcodes are written before replacing the original.")
 			</fieldset>

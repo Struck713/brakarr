@@ -65,6 +65,11 @@ func run() error {
 		Workers:        cfg.Workers,
 		WorkDir:        cfg.WorkDir,
 		SkipHardlinked: cfg.SkipHardlinked,
+		MinVMAF:        float64(cfg.MinVMAF),
+		VMAFSamples:    cfg.VMAFSamples,
+	}
+	if cfg.MinVMAF > 0 {
+		poolOpts.Scorer = ffmpeg
 	}
 	if apps := cfg.Apps(); settingsErr == nil && len(apps) > 0 {
 		notifier := arr.NewNotifier(apps, cfg.ArrPathMap)
@@ -76,6 +81,11 @@ func run() error {
 	if settingsErr == nil {
 		if err := ffmpeg.Preflight(); err != nil {
 			return err
+		}
+		if cfg.MinVMAF > 0 {
+			if err := ffmpeg.PreflightVMAF(); err != nil {
+				return err
+			}
 		}
 		if err := jobs.Start(ctx); err != nil {
 			return err

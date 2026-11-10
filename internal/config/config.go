@@ -49,6 +49,8 @@ type Config struct {
 	DBPath         string        `json:"dbPath"`
 	VaapiDevice    string        `json:"vaapiDevice"`
 	Quality        int           `json:"quality"`
+	MinVMAF        int           `json:"minVmaf"`
+	VMAFSamples    int           `json:"vmafSamples"`
 	Workers        int           `json:"workers"`
 	ListenAddr     string        `json:"listenAddr"`
 	SkipHardlinked bool          `json:"skipHardlinked"`
@@ -67,7 +69,9 @@ func Defaults() Config {
 		WorkDir:        "./work",
 		DBPath:         "app.db",
 		VaapiDevice:    "/dev/dri/renderD128",
-		Quality:        22,
+		Quality:        23,
+		MinVMAF:        94,
+		VMAFSamples:    3,
 		Workers:        1,
 		ListenAddr:     "127.0.0.1:1323",
 		SkipHardlinked: true,
@@ -169,8 +173,14 @@ func (c *Config) Validate() error {
 	if c.Workers < 1 {
 		errs = append(errs, errors.New("workers must be at least 1"))
 	}
-	if c.Quality < 0 || c.Quality > 51 {
-		errs = append(errs, errors.New("quality must be between 0 and 51"))
+	if c.Quality < 1 || c.Quality > 51 {
+		errs = append(errs, errors.New("quality must be between 1 and 51"))
+	}
+	if c.MinVMAF < 0 || c.MinVMAF > 100 {
+		errs = append(errs, errors.New("minimum VMAF must be between 0 and 100"))
+	}
+	if c.MinVMAF > 0 && (c.VMAFSamples < 1 || c.VMAFSamples > 10) {
+		errs = append(errs, errors.New("VMAF samples must be between 1 and 10"))
 	}
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(c.LogLevel)); err != nil {
