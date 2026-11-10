@@ -14,14 +14,17 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
+// Controller is implemented by anything that can register its routes on the router.
 type Controller interface {
 	Register(e *echo.Echo)
 }
 
+// Web holds the HTTP controllers that make up the web interface.
 type Web struct {
 	controllers []Controller
 }
 
+// NewWeb builds the web interface with its library, activity and settings controllers.
 func NewWeb(db controllers.Store, pool *pool.Pool, settings *config.Store) *Web {
 	return &Web{controllers: []Controller{
 		controllers.NewLibraryController(db, pool),
@@ -30,6 +33,7 @@ func NewWeb(db controllers.Store, pool *pool.Pool, settings *config.Store) *Web 
 	}}
 }
 
+// Routes builds the echo router with middleware, static files and controller routes.
 func (w *Web) Routes() *echo.Echo {
 	e := echo.New()
 
@@ -44,6 +48,7 @@ func (w *Web) Routes() *echo.Echo {
 	return e
 }
 
+// Run serves HTTP on addr until ctx is cancelled.
 func (w *Web) Run(ctx context.Context, addr string) error {
 	return echo.StartConfig{Address: addr}.Start(ctx, w.Routes())
 }

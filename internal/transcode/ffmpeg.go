@@ -12,15 +12,18 @@ import (
 	"time"
 )
 
+// FFmpeg transcodes video to HEVC using the ffmpeg binary.
 type FFmpeg struct {
 	Device  string
 	Quality int
 }
 
+// NewFFmpeg creates an FFmpeg transcoder for the given device and quality.
 func NewFFmpeg(device string, quality int) *FFmpeg {
 	return &FFmpeg{Device: device, Quality: quality}
 }
 
+// Preflight checks that ffmpeg and the configured device are usable.
 func (f *FFmpeg) Preflight() error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
@@ -31,6 +34,7 @@ func (f *FFmpeg) Preflight() error {
 	return nil
 }
 
+// Args builds the ffmpeg command-line arguments for a transcode.
 func (f *FFmpeg) Args(input, output string, bitDepth int) []string {
 	profile, swFormat := "main", "nv12"
 	if bitDepth > 8 {
@@ -58,6 +62,7 @@ func (f *FFmpeg) Args(input, output string, bitDepth int) []string {
 	return append(args, output)
 }
 
+// Transcode runs ffmpeg on input, writing output and reporting progress.
 func (f *FFmpeg) Transcode(ctx context.Context, input, output string, bitDepth int, onProgress func(Progress)) error {
 	cmd := exec.CommandContext(ctx, "ffmpeg", f.Args(input, output, bitDepth)...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
@@ -85,6 +90,7 @@ func (f *FFmpeg) Transcode(ctx context.Context, input, output string, bitDepth i
 	return parseErr
 }
 
+// tail returns the last n bytes of s.
 func tail(s string, n int) string {
 	if len(s) <= n {
 		return s

@@ -14,24 +14,29 @@ import (
 
 const flushInterval = time.Minute
 
+// App identifies a Sonarr or Radarr instance and its API.
 type App struct {
 	Name, BaseURL, APIKey      string
 	ListPath, Command, IDField string
 }
 
+// Sonarr returns an App for a Sonarr instance.
 func Sonarr(url, key string) App {
 	return App{"sonarr", strings.TrimRight(url, "/"), key, "/api/v3/series", "RescanSeries", "seriesId"}
 }
 
+// Radarr returns an App for a Radarr instance.
 func Radarr(url, key string) App {
 	return App{"radarr", strings.TrimRight(url, "/"), key, "/api/v3/movie", "RescanMovie", "movieId"}
 }
 
+// PathMap translates a local path prefix to the one used by the arr apps.
 type PathMap struct {
 	Local  string `json:"local"`
 	Remote string `json:"remote"`
 }
 
+// Notifier batches replaced files and asks the arr apps to rescan them.
 type Notifier struct {
 	apps   []App
 	maps   []PathMap
@@ -41,17 +46,20 @@ type Notifier struct {
 	pending map[string]struct{}
 }
 
+// NewNotifier creates a Notifier for the given apps and path maps.
 func NewNotifier(apps []App, maps []PathMap) *Notifier {
 	return &Notifier{apps: apps, maps: maps,
 		client: &http.Client{Timeout: 30 * time.Second}, pending: map[string]struct{}{}}
 }
 
+// Replaced queues a replaced file's path to be reported on the next flush.
 func (n *Notifier) Replaced(path string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.pending[n.remote(path)] = struct{}{}
 }
 
+// Run flushes queued paths periodically until ctx is cancelled.
 func (n *Notifier) Run(ctx context.Context) {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
@@ -65,6 +73,7 @@ func (n *Notifier) Run(ctx context.Context) {
 	}
 }
 
+// flush notifies every app about the queued paths and clears the queue.
 func (n *Notifier) flush(ctx context.Context) {
 	n.mu.Lock()
 	paths := n.pending
@@ -80,11 +89,13 @@ func (n *Notifier) flush(ctx context.Context) {
 	}
 }
 
+// libraryItem is the part of an arr library entry needed to find and refresh it.
 type libraryItem struct {
 	ID   int    `json:"id"`
 	Path string `json:"path"`
 }
 
+// notify asks one app to refresh the items matching the given paths.
 func (n *Notifier) notify(ctx context.Context, app App, paths map[string]struct{}) error {
 	var items []libraryItem
 	if err := n.do(ctx, app, http.MethodGet, app.ListPath, nil, &items); err != nil {
@@ -110,6 +121,7 @@ func (n *Notifier) notify(ctx context.Context, app App, paths map[string]struct{
 	return nil
 }
 
+// do sends a JSON request to the app's API and decodes the response into out.
 func (n *Notifier) do(ctx context.Context, app App, method, path string, body, out any) error {
 	var buf bytes.Buffer
 	if body != nil {

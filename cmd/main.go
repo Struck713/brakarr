@@ -21,6 +21,7 @@ import (
 
 //go:generate templ generate -path ../internal/web/templates
 
+// main runs the application and exits non-zero on error.
 func main() {
 	if err := run(); err != nil {
 		slog.Error("brakarr exited", "error", err)
@@ -28,6 +29,7 @@ func main() {
 	}
 }
 
+// run wires up the application's components and blocks until shutdown.
 func run() error {
 	configPath := flag.String("config", "config.json", "path to the JSON settings file")
 	listen := flag.String("listen", "", "override the listen address from the settings file")

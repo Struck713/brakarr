@@ -21,6 +21,7 @@ import (
 const pollInterval = 5 * time.Second
 const maxDurationDrift = int64(time.Second / time.Microsecond)
 
+// Store is the persistence the pool needs to claim and update jobs.
 type Store interface {
 	ClaimNext(ctx context.Context) (*media.Media, error)
 	RequeueRunning(ctx context.Context) error
@@ -31,10 +32,12 @@ type Store interface {
 	Replace(ctx context.Context, oldHash []byte, next *media.Media) error
 }
 
+// Transcoder converts a media file into a new output file.
 type Transcoder interface {
 	Transcode(ctx context.Context, input, output string, bitDepth int, onProgress func(transcode.Progress)) error
 }
 
+// Options configures a Pool.
 type Options struct {
 	Workers        int
 	WorkDir        string
@@ -44,6 +47,7 @@ type Options struct {
 	OnReplaced func(path string)
 }
 
+// Pool runs transcode jobs on a set of concurrent workers.
 type Pool struct {
 	store Store
 	tc    Transcoder
@@ -59,6 +63,7 @@ type Pool struct {
 	wg     sync.WaitGroup
 }
 
+// NewPool creates a Pool using the given store, transcoder and options.
 func NewPool(store Store, tc Transcoder, opts Options) *Pool {
 	return &Pool{
 		store: store,
@@ -71,6 +76,7 @@ func NewPool(store Store, tc Transcoder, opts Options) *Pool {
 	}
 }
 
+// Start launches the workers and returns once they are running.
 func (p *Pool) Start(parent context.Context) error {
 	if err := os.MkdirAll(p.opts.WorkDir, 0o755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
@@ -92,6 +98,7 @@ func (p *Pool) Start(parent context.Context) error {
 	return nil
 }
 
+// Stop cancels the workers and waits for them to exit.
 func (p *Pool) Stop() {
 	p.mu.RLock()
 	cancel := p.cancel
@@ -102,6 +109,7 @@ func (p *Pool) Stop() {
 	p.wg.Wait()
 }
 
+// Notify wakes the workers because new work may be available.
 func (p *Pool) Notify() {
 	select {
 	case p.wake <- struct{}{}:
@@ -109,6 +117,7 @@ func (p *Pool) Notify() {
 	}
 }
 
+// Jobs returns the jobs currently being processed.
 func (p *Pool) Jobs() []*Job {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -120,6 +129,7 @@ func (p *Pool) Jobs() []*Job {
 	return jobs
 }
 
+// worker processes jobs until the context is cancelled.
 func (p *Pool) worker(ctx context.Context, id int) {
 	defer p.wg.Done()
 
@@ -139,6 +149,7 @@ func (p *Pool) worker(ctx context.Context, id int) {
 	}
 }
 
+// runNext claims and transcodes the next pending item, reporting whether one was found.
 func (p *Pool) runNext(ctx context.Context, id int) bool {
 	item, err := p.store.ClaimNext(ctx)
 	if err != nil {
@@ -192,6 +203,7 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 	return true
 }
 
+// fail logs the cause and marks the item as failed.
 func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 	slog.Error("pool: job failed", "name", item.Name, "error", cause)
 	if err := p.store.Fail(ctx, item.Hash, cause.Error()); err != nil {
@@ -199,6 +211,7 @@ func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 	}
 }
 
+// finish verifies the transcoded output and replaces the original, failing or skipping as needed.
 func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 	next, skipReason, err := p.verify(item, output)
 	switch {
@@ -223,6 +236,7 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 	slog.Info("pool: replaced original", "name", item.Name, "before", item.Size, "after", next.Size)
 }
 
+// verify probes the output and checks it is valid HEVC of matching duration and smaller than the source.
 func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skipReason string, err error) {
 	next, err = p.probe(output, nil)
 	if err != nil {
@@ -249,6 +263,7 @@ func (p *Pool) verify(item *media.Media, output string) (next *media.Media, skip
 	return next, "", nil
 }
 
+// replaceOriginal swaps the source file for the transcoded output and updates the store.
 func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media) error {
 	// st, err := os.Stat(item.Path)
 	// if err != nil {
@@ -276,6 +291,7 @@ func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output st
 	return nil
 }
 
+// moveFile moves src to dst, falling back to copying when a rename is not possible.
 func moveFile(src, dst string) error {
 	if st, err := os.Stat(dst); err == nil {
 		defer func() {
@@ -318,18 +334,21 @@ func moveFile(src, dst string) error {
 	return os.Remove(src)
 }
 
+// setJob records the job a worker is running.
 func (p *Pool) setJob(id int, job *Job) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.jobs[id] = job
 }
 
+// clearJob removes the job record for a worker.
 func (p *Pool) clearJob(id int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.jobs, id)
 }
 
+// cleanWorkDir removes leftover files from the work directory.
 func (p *Pool) cleanWorkDir() {
 	entries, err := os.ReadDir(p.opts.WorkDir)
 	if err != nil {

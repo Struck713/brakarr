@@ -13,25 +13,30 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
+// SettingsController serves the settings page and persists changes.
 type SettingsController struct {
 	settings *config.Store
 }
 
+// NewSettingsController creates a SettingsController backed by the config store.
 func NewSettingsController(settings *config.Store) *SettingsController {
 	return &SettingsController{settings: settings}
 }
 
+// Register adds the settings routes to the router.
 func (s *SettingsController) Register(e *echo.Echo) {
 	e.GET("/settings", s.Show)
 	e.POST("/settings", s.Save)
 }
 
+// Show renders the settings page with the current configuration.
 func (s *SettingsController) Show(c *echo.Context) error {
 	return Render(c, http.StatusOK, templates.SettingsPage(templates.SettingsView{
 		Config: s.settings.Get(), Path: s.settings.Path(),
 	}))
 }
 
+// Save validates the submitted form and writes the new configuration.
 func (s *SettingsController) Save(c *echo.Context) error {
 	cfg, err := s.fromForm(c)
 	view := templates.SettingsView{Config: cfg, Path: s.settings.Path()}
@@ -48,6 +53,7 @@ func (s *SettingsController) Save(c *echo.Context) error {
 	return Render(c, status, templates.SettingsPage(view))
 }
 
+// fromForm builds a Config from the submitted form values.
 func (s *SettingsController) fromForm(c *echo.Context) (config.Config, error) {
 	cfg := s.settings.Get()
 	var errs []error

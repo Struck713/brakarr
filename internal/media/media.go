@@ -11,6 +11,7 @@ import (
 	"github.com/zelenin/go-mediainfo"
 )
 
+// Media describes a video file tracked by the application.
 type Media struct {
 	Hash      []byte
 	Path      string
@@ -25,10 +26,12 @@ type Media struct {
 	Attempts  int
 }
 
+// IsHEVC reports whether the file is already HEVC encoded.
 func (m *Media) IsHEVC() bool {
 	return strings.EqualFold(m.Format, "HEVC")
 }
 
+// Hash returns a content hash identifying the file at path.
 func Hash(path string) ([]byte, error) {
 	sum, err := imohash.SumFile(path)
 	if err != nil {
@@ -37,6 +40,7 @@ func Hash(path string) ([]byte, error) {
 	return sum[:], nil
 }
 
+// Probe inspects the file with ffprobe and returns its metadata.
 func Probe(path string, hash []byte) (*Media, error) {
 	info, err := mediainfo.Open(path)
 	if err != nil {
@@ -62,6 +66,7 @@ func Probe(path string, hash []byte) (*Media, error) {
 
 var ErrNoVideo = errors.New("no video stream found")
 
+// parseDurationUs converts a millisecond string into microseconds.
 func parseDurationUs(milliseconds string) int64 {
 	value, err := strconv.ParseFloat(milliseconds, 64)
 	if err != nil {

@@ -1,5 +1,6 @@
 package media
 
+// Status is the processing state of a media file.
 type Status string
 
 const (

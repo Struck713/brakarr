@@ -12,6 +12,7 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// migrate creates or upgrades the database schema.
 func migrate(db *sql.DB) error {
 	entries, err := fs.ReadDir(migrationFS, "migrations") // sorted by filename
 	if err != nil {
