@@ -84,8 +84,7 @@ Everything is edited on the Settings page and stored in a JSON file (`-config`, 
 | Listen address | `listenAddr` | `127.0.0.1:1323` | Web UI address. |
 | Skip hardlinked | `skipHardlinked` | `true` | Defer files that have more than one hardlink. |
 | Log level | `logLevel` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON on stdout. |
-| Sonarr | `sonarr.url`, `sonarr.apiKey` | *(none)* | Optional. URL and API key must be set together. |
-| Radarr | `radarr.url`, `radarr.apiKey` | *(none)* | Optional. URL and API key must be set together. |
+| Services | `services` | `[]` | Sonarr and Radarr instances, managed on **Settings > Services**. Each has `id`, `name` (unique), `type` (`sonarr` or `radarr`), `url`, `apiKey` and `enabled`. Only enabled services are notified. |
 | Path mappings | `arrPathMap` | `[]` | `{ "local": ..., "remote": ... }` pairs for when Brakarr and the apps see different paths. |
 
 Example `config.json`:
@@ -95,11 +94,15 @@ Example `config.json`:
   "crawlPath": "/data/media",
   "quality": 23,
   "minVmaf": 94,
-  "sonarr": { "url": "http://sonarr:8989", "apiKey": "..." },
-  "radarr": { "url": "http://radarr:7878", "apiKey": "..." },
+  "services": [
+    { "id": "sonarr", "name": "Sonarr", "type": "sonarr", "url": "http://sonarr:8989", "apiKey": "...", "enabled": true },
+    { "id": "radarr", "name": "Radarr", "type": "radarr", "url": "http://radarr:7878", "apiKey": "...", "enabled": true }
+  ],
   "arrPathMap": [{ "local": "/data/media", "remote": "/media" }]
 }
 ```
+
+Older versions stored a single `sonarr` and `radarr` entry. Those keys are migrated to services automatically when the file is loaded and disappear the next time settings are saved.
 
 ### Command-line flags
 
@@ -122,8 +125,8 @@ CGO_ENABLED=1 go build -o brakarr ./cmd
 
 ```
 cmd/                 entry point
-internal/arr         Sonarr/Radarr rescan notifier
-internal/config      settings file, validation
+internal/arr         supported service types, Sonarr/Radarr rescan notifier
+internal/config      settings file, services, validation
 internal/crawler     library scanner
 internal/database    SQLite store and migrations
 internal/media       probing, hashing, hardlink detection

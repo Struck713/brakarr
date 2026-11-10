@@ -1,7 +1,6 @@
 package templates
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Struck713/brakarr/internal/config"
@@ -16,16 +15,8 @@ type SettingsView struct {
 
 func joinExtensions(exts []string) string { return strings.Join(exts, ", ") }
 
-func joinPathMap(c config.Config) string {
-	lines := make([]string, 0, len(c.ArrPathMap))
-	for _, m := range c.ArrPathMap {
-		lines = append(lines, m.Local+"="+m.Remote)
-	}
-	return strings.Join(lines, "\n")
-}
-
 templ SettingsPage(v SettingsView) {
-	@layout(navSettings, "Settings") {
+	@settingsLayout(tabGeneral) {
 		<form class="settings" method="post" action="/settings">
 			if v.Saved {
 				<div class="notice notice-success">Saved to <code>{ v.Path }</code>. Restart Brakarr for changes to take effect.</div>
@@ -57,19 +48,6 @@ templ SettingsPage(v SettingsView) {
 				@textField("workDir", "Work directory", v.Config.WorkDir, "Where transcodes are written before replacing the original.")
 			</fieldset>
 			<fieldset>
-				<legend>Sonarr and Radarr</legend>
-				<p class="hint">Asks the apps to rescan after a file is replaced, so their stored size and codec stay correct. Each URL and API key must be set together.</p>
-				@textField("sonarrUrl", "Sonarr URL", v.Config.Sonarr.URL, "http://sonarr:8989")
-				@secretField("sonarrApiKey", "Sonarr API key", v.Config.Sonarr.APIKey != "")
-				@textField("radarrUrl", "Radarr URL", v.Config.Radarr.URL, "http://radarr:7878")
-				@secretField("radarrApiKey", "Radarr API key", v.Config.Radarr.APIKey != "")
-				<div class="field">
-					<label for="arrPathMap">Path mappings</label>
-					<textarea id="arrPathMap" name="arrPathMap" rows="3" spellcheck="false">{ joinPathMap(v.Config) }</textarea>
-					<span class="hint">One <code>brakarr-path=app-path</code> per line, for when the apps see different paths than Brakarr.</span>
-				</div>
-			</fieldset>
-			<fieldset>
 				<legend>System</legend>
 				@textField("listenAddr", "Listen address", v.Config.ListenAddr, "The web UI has no authentication; keep it on a trusted network.")
 				<div class="field">
@@ -90,48 +68,4 @@ templ SettingsPage(v SettingsView) {
 			</div>
 		</form>
 	}
-}
-
-templ textField(name, label, value, hint string) {
-	<div class="field">
-		<label for={ name }>{ label }</label>
-		<input id={ name } name={ name } type="text" value={ value } spellcheck="false" autocomplete="off"/>
-		if hint != "" {
-			<span class="hint">{ hint }</span>
-		}
-	</div>
-}
-
-templ numberField(name, label string, value int, hint string) {
-	<div class="field">
-		<label for={ name }>{ label }</label>
-		<input id={ name } name={ name } type="number" value={ fmt.Sprint(value) }/>
-		if hint != "" {
-			<span class="hint">{ hint }</span>
-		}
-	</div>
-}
-
-templ checkField(name, label string, checked bool, hint string) {
-	<div class="field">
-		<label class="check">
-			<input name={ name } type="checkbox" checked?={ checked }/>
-			{ label }
-		</label>
-		<span class="hint">{ hint }</span>
-	</div>
-}
-
-templ secretField(name, label string, set bool) {
-	<div class="field">
-		<label for={ name }>{ label }</label>
-		<input id={ name } name={ name } type="password" autocomplete="new-password" placeholder={ secretPlaceholder(set) }/>
-	</div>
-}
-
-func secretPlaceholder(set bool) string {
-	if set {
-		return "Saved. Leave blank to keep it."
-	}
-	return ""
 }

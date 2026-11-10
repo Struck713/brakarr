@@ -1,0 +1,17 @@
+package templates
+
+const (
+	tabGeneral  = "general"
+	tabServices = "services"
+)
+
+// settingsLayout wraps the settings pages in the page layout and the tab bar.
+templ settingsLayout(tab string) {
+	@layout(navSettings, "Settings") {
+		<nav class="tabs" aria-label="Settings" hx-boost="true">
+			<a href="/settings" { currentPage(tab == tabGeneral)... }>General</a>
+			<a href="/settings/services" { currentPage(tab == tabServices)... }>Services</a>
+		</nav>
+		{ children... }
+	}
+}
