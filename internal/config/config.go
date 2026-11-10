@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Struck713/brakarr/internal/arr"
+	"github.com/Struck713/brakarr/internal/transcode"
 )
 
 // Duration is a time.Duration that serialises as text such as "5m".
@@ -40,7 +41,8 @@ type Config struct {
 	MinFileAge     Duration      `json:"minFileAge"`
 	WorkDir        string        `json:"workDir"`
 	DBPath         string        `json:"dbPath"`
-	VaapiDevice    string        `json:"vaapiDevice"`
+	Encoder        string        `json:"encoder"`
+	Device         string        `json:"device"`
 	Quality        int           `json:"quality"`
 	MinVMAF        int           `json:"minVmaf"`
 	VMAFSamples    int           `json:"vmafSamples"`
@@ -60,7 +62,7 @@ func Defaults() Config {
 		MinFileAge:     Duration(30 * time.Second),
 		WorkDir:        "./work",
 		DBPath:         "app.db",
-		VaapiDevice:    "/dev/dri/renderD128",
+		Encoder:        transcode.DefaultEncoder,
 		Quality:        23,
 		MinVMAF:        94,
 		VMAFSamples:    3,
@@ -87,7 +89,8 @@ func (c *Config) Normalize() {
 	c.CrawlPath = strings.TrimSpace(c.CrawlPath)
 	c.WorkDir = strings.TrimSpace(c.WorkDir)
 	c.DBPath = strings.TrimSpace(c.DBPath)
-	c.VaapiDevice = strings.TrimSpace(c.VaapiDevice)
+	c.Encoder = strings.ToLower(strings.TrimSpace(c.Encoder))
+	c.Device = strings.TrimSpace(c.Device)
 	c.ListenAddr = strings.TrimSpace(c.ListenAddr)
 	c.LogLevel = strings.ToLower(strings.TrimSpace(c.LogLevel))
 	c.normalizeServices()
@@ -152,6 +155,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Workers < 1 {
 		errs = append(errs, errors.New("workers must be at least 1"))
+	}
+	if _, err := transcode.NewEncoder(c.Encoder, c.Device); err != nil {
+		errs = append(errs, err)
 	}
 	if c.Quality < 1 || c.Quality > 51 {
 		errs = append(errs, errors.New("quality must be between 1 and 51"))

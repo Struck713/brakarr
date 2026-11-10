@@ -7,55 +7,41 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
 // FFmpeg transcodes video to HEVC using the ffmpeg binary.
 type FFmpeg struct {
-	Device  string
-	Quality int // ICQ quality target, 1-51, lower is better
+	Encoder Encoder
+	Quality int // quality target, 1-51, lower is better
 }
 
-// NewFFmpeg creates an FFmpeg transcoder for the given device and quality.
-func NewFFmpeg(device string, quality int) *FFmpeg {
-	return &FFmpeg{Device: device, Quality: quality}
+// NewFFmpeg creates an FFmpeg transcoder for the given encoder and quality.
+func NewFFmpeg(encoder Encoder, quality int) *FFmpeg {
+	return &FFmpeg{Encoder: encoder, Quality: quality}
 }
 
-// Preflight checks that ffmpeg and the configured device are usable.
-func (f *FFmpeg) Preflight() error {
+// Preflight checks that ffmpeg and the configured encoder are usable.
+func (f *FFmpeg) Preflight(ctx context.Context) error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
-	if _, err := os.Stat(f.Device); err != nil {
-		return fmt.Errorf("vaapi device: %w", err)
-	}
-	return nil
+	return f.Encoder.Preflight(ctx)
 }
 
 // Args builds the ffmpeg command-line arguments for a transcode.
 func (f *FFmpeg) Args(input, output string, bitDepth int) []string {
-	profile, swFormat := "main", "nv12"
-	if bitDepth > 8 {
-		profile, swFormat = "main10", "p010"
-	}
-	args := []string{
-		"-nostdin", "-y",
-		"-init_hw_device", "vaapi=va:" + f.Device,
-		"-filter_hw_device", "va",
-		"-hwaccel", "vaapi", "-hwaccel_device", "va",
-		"-hwaccel_output_format", "vaapi",
+	args := []string{"-nostdin", "-y"}
+	args = append(args, f.Encoder.InputArgs()...)
+	args = append(args,
 		"-i", input,
 		"-loglevel", "error",
 		"-nostats", "-progress", "pipe:1",
 		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?",
-		// Accepts hardware frames as they are, and uploads software frames
-		// when the GPU could not decode the source.
-		"-vf", "format=" + swFormat + "|vaapi,hwupload",
-		"-c:v", "hevc_vaapi", "-profile:v", profile, "-rc_mode", "ICQ", "-global_quality", strconv.Itoa(f.Quality),
-		"-c:a", "copy", "-c:s", "copy", "-c:t", "copy",
-	}
+	)
+	args = append(args, f.Encoder.VideoArgs(bitDepth, f.Quality)...)
+	args = append(args, "-c:a", "copy", "-c:s", "copy", "-c:t", "copy")
 	if strings.EqualFold(filepath.Ext(output), ".mp4") {
 		args = append(args, "-tag:v", "hvc1") // required by Apple players
 	}

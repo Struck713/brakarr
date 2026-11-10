@@ -28,10 +28,11 @@ type legacyApp struct {
 	APIKey string `json:"apiKey"`
 }
 
-// legacy holds the config keys that older versions used for services.
+// legacy holds the config keys that older versions used.
 type legacy struct {
-	Sonarr legacyApp `json:"sonarr"`
-	Radarr legacyApp `json:"radarr"`
+	Sonarr      legacyApp `json:"sonarr"`
+	Radarr      legacyApp `json:"radarr"`
+	VaapiDevice string    `json:"vaapiDevice"`
 }
 
 // file is the on-disk shape: the config plus legacy keys read only for migration.
@@ -47,12 +48,10 @@ func (f *file) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-	for _, k := range []string{"sonarr", "radarr"} {
+	for k, target := range map[string]any{
+		"sonarr": &f.Sonarr, "radarr": &f.Radarr, "vaapiDevice": &f.VaapiDevice,
+	} {
 		if v, ok := raw[k]; ok {
-			target := &f.Sonarr
-			if k == "radarr" {
-				target = &f.Radarr
-			}
 			if err := json.Unmarshal(v, target); err != nil {
 				return err
 			}
@@ -68,9 +67,13 @@ func (f *file) UnmarshalJSON(b []byte) error {
 	return dec.Decode(&f.Config)
 }
 
-// migrate converts legacy sonarr and radarr entries into services when the
-// config has no services of its own. The legacy keys vanish on the next save.
+// migrate converts legacy keys to their current form: vaapiDevice becomes the
+// device, and sonarr and radarr entries become services when the config has no
+// services of its own. The legacy keys vanish on the next save.
 func (c *Config) migrate(l legacy) {
+	if c.Device == "" && c.Encoder == "vaapi" {
+		c.Device = l.VaapiDevice
+	}
 	if len(c.Services) > 0 {
 		return
 	}

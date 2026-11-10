@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Struck713/brakarr/internal/config"
+	"github.com/Struck713/brakarr/internal/transcode"
 )
 
 type SettingsView struct {
@@ -40,8 +41,17 @@ templ SettingsPage(v SettingsView) {
 			</fieldset>
 			<fieldset>
 				<legend>Transcoding</legend>
-				@textField("vaapiDevice", "VAAPI device", v.Config.VaapiDevice, "")
-				@numberField("quality", "Quality", v.Config.Quality, "HEVC ICQ target, 1-51 (lower is better quality and a larger file). Around 21-26 is a good range.")
+				<div class="field">
+					<label for="encoder">Encoder</label>
+					<select id="encoder" name="encoder">
+						for _, e := range transcode.Encoders() {
+							<option value={ e.ID } selected?={ e.ID == v.Config.Encoder }>{ e.Label }</option>
+						}
+					</select>
+					<span class="hint">The kind of GPU that transcodes.</span>
+				</div>
+				@textField("device", "Device", v.Config.Device, "Which GPU to use. VAAPI: a render node, such as /dev/dri/renderD128. NVENC: a GPU index, such as 0. Blank uses the default.")
+				@numberField("quality", "Quality", v.Config.Quality, "HEVC quality target, 1-51 (lower is better quality and a larger file). Around 21-26 is a good range.")
 				@numberField("minVmaf", "Minimum VMAF", v.Config.MinVMAF, "Keep the original when the transcode scores below this against it (0-100, about 94 is visually clean). 0 disables the check.")
 				@numberField("vmafSamples", "VMAF samples", v.Config.VMAFSamples, "Number of 20 second segments compared per file. More is more thorough but slower.")
 				@numberField("workers", "Workers", v.Config.Workers, "Simultaneous transcodes.")

@@ -60,7 +60,10 @@ func run() error {
 			"file", store.Path(), "error", settingsErr)
 	}
 
-	ffmpeg := transcode.NewFFmpeg(cfg.VaapiDevice, cfg.Quality)
+	// Validate has already reported a bad encoder; it is nil then, and never used because
+	// transcoding stays disabled.
+	encoder, _ := transcode.NewEncoder(cfg.Encoder, cfg.Device)
+	ffmpeg := transcode.NewFFmpeg(encoder, cfg.Quality)
 	poolOpts := pool.Options{
 		Workers:        cfg.Workers,
 		WorkDir:        cfg.WorkDir,
@@ -79,7 +82,7 @@ func run() error {
 	jobs := pool.NewPool(db, ffmpeg, poolOpts)
 
 	if settingsErr == nil {
-		if err := ffmpeg.Preflight(); err != nil {
+		if err := ffmpeg.Preflight(ctx); err != nil {
 			return err
 		}
 		if cfg.MinVMAF > 0 {
@@ -104,7 +107,7 @@ func run() error {
 	}
 
 	slog.Info("brakarr started", "listen", cfg.ListenAddr, "crawl", cfg.CrawlPath,
-		"workers", cfg.Workers, "config", store.Path())
+		"encoder", cfg.Encoder, "workers", cfg.Workers, "config", store.Path())
 
 	server := web.NewWeb(db, jobs, store)
 	if err := server.Run(ctx, cfg.ListenAddr); err != nil && !errors.Is(err, context.Canceled) {
