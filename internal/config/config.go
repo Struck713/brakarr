@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Struck713/brakarr/internal/arr"
+	"github.com/Struck713/brakarr/internal/transcode"
 )
 
 // Duration is a time.Duration that serialises as text such as "5m".
@@ -40,7 +42,8 @@ type Config struct {
 	MinFileAge     Duration      `json:"minFileAge"`
 	WorkDir        string        `json:"workDir"`
 	DBPath         string        `json:"dbPath"`
-	VaapiDevice    string        `json:"vaapiDevice"`
+	Encoder        string        `json:"encoder"`
+	Device         string        `json:"device"`
 	Quality        int           `json:"quality"`
 	MinVMAF        int           `json:"minVmaf"`
 	VMAFSamples    int           `json:"vmafSamples"`
@@ -60,7 +63,7 @@ func Defaults() Config {
 		MinFileAge:     Duration(30 * time.Second),
 		WorkDir:        "./work",
 		DBPath:         "app.db",
-		VaapiDevice:    "/dev/dri/renderD128",
+		Encoder:        transcode.DefaultEncoder,
 		Quality:        23,
 		MinVMAF:        94,
 		VMAFSamples:    3,
@@ -87,7 +90,8 @@ func (c *Config) Normalize() {
 	c.CrawlPath = strings.TrimSpace(c.CrawlPath)
 	c.WorkDir = strings.TrimSpace(c.WorkDir)
 	c.DBPath = strings.TrimSpace(c.DBPath)
-	c.VaapiDevice = strings.TrimSpace(c.VaapiDevice)
+	c.Encoder = strings.ToLower(strings.TrimSpace(c.Encoder))
+	c.Device = strings.TrimSpace(c.Device)
 	c.ListenAddr = strings.TrimSpace(c.ListenAddr)
 	c.LogLevel = strings.ToLower(strings.TrimSpace(c.LogLevel))
 	c.normalizeServices()
@@ -153,6 +157,9 @@ func (c *Config) Validate() error {
 	if c.Workers < 1 {
 		errs = append(errs, errors.New("workers must be at least 1"))
 	}
+	if _, err := transcode.NewEncoder(c.Encoder, c.Device); err != nil {
+		errs = append(errs, err)
+	}
 	if c.Quality < 1 || c.Quality > 51 {
 		errs = append(errs, errors.New("quality must be between 1 and 51"))
 	}
@@ -170,31 +177,53 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Read loads a configuration from the file at path.
+// file is the on-disk shape: the config tagged with its format version.
+type file struct {
+	Version int `json:"version"`
+	Config
+}
+
+// Read loads a configuration from the file at path, migrating it from older
+// versions as needed.
 func Read(path string) (Config, error) {
-	c := Defaults()
+	c, _, err := read(path)
+	return c, err
+}
+
+// read loads the configuration at path and reports whether the file is missing
+// or out of date and should be rewritten.
+func read(path string) (Config, bool, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return c, nil
+		return Defaults(), true, nil
 	}
 	if err != nil {
-		return c, err
+		return Defaults(), false, err
 	}
-	dec := json.NewDecoder(strings.NewReader(string(b)))
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return Defaults(), false, fmt.Errorf("%s: %w", path, err)
+	}
+	from, err := migrate(m)
+	if err != nil {
+		return Defaults(), false, fmt.Errorf("%s: %w", path, err)
+	}
+	if b, err = json.Marshal(m); err != nil {
+		return Defaults(), false, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
-	f := file{Config: c}
+	f := file{Config: Defaults()}
 	if err := dec.Decode(&f); err != nil {
-		return Defaults(), fmt.Errorf("%s: %w", path, err)
+		return Defaults(), false, fmt.Errorf("%s: %w", path, err)
 	}
-	c = f.Config
-	c.migrate(f.legacy)
-	c.Normalize()
-	return c, nil
+	f.Config.Normalize()
+	return f.Config, from < currentVersion, nil
 }
 
 // Write saves the configuration to the file at path.
 func Write(path string, c Config) error {
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := json.MarshalIndent(file{Version: currentVersion, Config: c}, "", "  ")
 	if err != nil {
 		return err
 	}

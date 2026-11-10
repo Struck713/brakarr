@@ -3,10 +3,23 @@ services:
     build: .
     restart: unless-stopped
     user: "1000:1000"
+
+    # Intel and AMD GPUs (VAAPI encoder).
     group_add:
       - render # use the numeric group ID if the name doesn't exist in the image
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
+
+    # NVIDIA GPUs (NVENC encoder): remove group_add and devices above and use this instead.
+    # The host needs the NVIDIA driver and the NVIDIA Container Toolkit.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video]
+
     volumes:
       - ./config:/config
       - /path/to/data:/data # match the path your *arr containers use

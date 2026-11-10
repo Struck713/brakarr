@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"os"
 	"slices"
 	"sync"
 )
@@ -14,13 +13,14 @@ type Store struct {
 	cur  Config
 }
 
-// Open loads the configuration at path, creating it with defaults if needed.
+// Open loads the configuration at path, creating it with defaults if needed
+// and rewriting it if it was migrated from an older version.
 func Open(path string) (*Store, error) {
-	c, err := Read(path)
+	c, stale, err := read(path)
 	if err != nil {
 		return nil, err
 	}
-	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+	if stale {
 		if err := Write(path, c); err != nil {
 			return nil, err
 		}

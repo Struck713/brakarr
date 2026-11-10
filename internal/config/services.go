@@ -1,10 +1,8 @@
 package config
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,72 +18,6 @@ type Service struct {
 	URL     string `json:"url"`
 	APIKey  string `json:"apiKey"`
 	Enabled bool   `json:"enabled"`
-}
-
-// legacyApp is the connection details stored by older versions.
-type legacyApp struct {
-	URL    string `json:"url"`
-	APIKey string `json:"apiKey"`
-}
-
-// legacy holds the config keys that older versions used for services.
-type legacy struct {
-	Sonarr legacyApp `json:"sonarr"`
-	Radarr legacyApp `json:"radarr"`
-}
-
-// file is the on-disk shape: the config plus legacy keys read only for migration.
-type file struct {
-	Config
-	legacy
-}
-
-// UnmarshalJSON decodes the embedded Config and the legacy keys together while
-// still rejecting unknown fields.
-func (f *file) UnmarshalJSON(b []byte) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	for _, k := range []string{"sonarr", "radarr"} {
-		if v, ok := raw[k]; ok {
-			target := &f.Sonarr
-			if k == "radarr" {
-				target = &f.Radarr
-			}
-			if err := json.Unmarshal(v, target); err != nil {
-				return err
-			}
-			delete(raw, k)
-		}
-	}
-	rest, err := json.Marshal(raw)
-	if err != nil {
-		return err
-	}
-	dec := json.NewDecoder(bytes.NewReader(rest))
-	dec.DisallowUnknownFields()
-	return dec.Decode(&f.Config)
-}
-
-// migrate converts legacy sonarr and radarr entries into services when the
-// config has no services of its own. The legacy keys vanish on the next save.
-func (c *Config) migrate(l legacy) {
-	if len(c.Services) > 0 {
-		return
-	}
-	for _, old := range []struct {
-		typ, name string
-		legacyApp
-	}{{"sonarr", "Sonarr", l.Sonarr}, {"radarr", "Radarr", l.Radarr}} {
-		if strings.TrimSpace(old.URL) == "" {
-			continue
-		}
-		c.Services = append(c.Services, Service{
-			ID: old.typ, Name: old.name, Type: old.typ,
-			URL: old.URL, APIKey: old.APIKey, Enabled: true,
-		})
-	}
 }
 
 // Apps returns the enabled services as arr.Apps.

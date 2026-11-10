@@ -76,7 +76,8 @@ func (s *SettingsController) fromForm(c *echo.Context) (config.Config, error) {
 	duration("crawlInterval", "scan interval", &cfg.CrawlInterval)
 	duration("minFileAge", "minimum file age", &cfg.MinFileAge)
 	cfg.SkipHardlinked = c.FormValue("skipHardlinked") != ""
-	cfg.VaapiDevice = text("vaapiDevice")
+	cfg.Encoder = text("encoder")
+	cfg.Device = text("device")
 	integer("quality", "quality", &cfg.Quality)
 	integer("minVmaf", "minimum VMAF", &cfg.MinVMAF)
 	integer("vmafSamples", "VMAF samples", &cfg.VMAFSamples)

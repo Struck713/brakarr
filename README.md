@@ -2,7 +2,7 @@
 
 Brakarr shrinks your media library by transcoding H.264 (and other) video to HEVC on your GPU, then swapping the smaller file in place of the original. It is built to sit next to Sonarr and Radarr, and it tells them to rescan when a file changes.
 
-- **Hardware-accelerated.** Encodes with `hevc_vaapi` on Intel and AMD GPUs. Video is re-encoded; audio, subtitles and attachments are copied untouched.
+- **Hardware-accelerated.** Encodes with `hevc_vaapi` on Intel and AMD GPUs, or `hevc_nvenc` on NVIDIA GPUs. Video is re-encoded; audio, subtitles and attachments are copied untouched.
 - **Quality-checked.** Before replacing anything, Brakarr checks that the output is valid HEVC, has the same duration, is smaller than the source, and (optionally) scores well on VMAF.
 - **Sonarr/Radarr aware.** Replaced files are batched and reported to the apps so they rescan the affected series or movies.
 - **Hardlink-safe.** Files with more than one hardlink (for example, still seeding) are deferred until only one link remains, so no extra copy is created.
@@ -24,8 +24,8 @@ Files end up as `pending`, `running`, `complete`, `skipped`, `deferred` or `fail
 
 ## Requirements
 
-- Linux host with a VAAPI-capable GPU (for example `/dev/dri/renderD128`).
-- Docker (recommended), or Go 1.26+, `libmediainfo-dev` and an ffmpeg build with VAAPI and `libvmaf` if you build from source.
+- Linux host with a VAAPI-capable Intel or AMD GPU (for example `/dev/dri/renderD128`), or an NVIDIA GPU with the NVIDIA driver and, for Docker, the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+- Docker (recommended), or Go 1.26+, `libmediainfo-dev` and an ffmpeg build with VAAPI or NVENC and `libvmaf` if you build from source.
 
 ## Quick start (Docker)
 
@@ -58,6 +58,18 @@ services:
 docker compose up -d
 ```
 
+For an NVIDIA GPU, replace `group_add` and `devices` with a GPU reservation, and set the encoder to **NVENC** on the Settings page:
+
+```yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+```
+
 Then open <http://localhost:1323>, go to **Settings**, and set the crawl path (for example `/data/media`). Settings are saved to `/config/config.json`. Save, then restart the container: changes to settings take effect on restart.
 
 Mount your media at the **same path** your Sonarr/Radarr containers use. This keeps hardlink detection accurate and avoids needing path mappings.
@@ -76,8 +88,9 @@ Everything is edited on the Settings page and stored in a JSON file (`-config`, 
 | Minimum file age | `minFileAge` | `30s` | Ignore files modified more recently than this. |
 | Work directory | `workDir` | `./work` | Where transcodes are written before replacing the original. Needs space for your largest file. |
 | Database path | `dbPath` | `app.db` | SQLite database. |
-| VAAPI device | `vaapiDevice` | `/dev/dri/renderD128` | GPU render node. |
-| Quality | `quality` | `23` | ICQ quality, 1–51. Lower is higher quality and larger files. |
+| Encoder | `encoder` | `vaapi` | `vaapi` (Intel, AMD) or `nvenc` (NVIDIA). |
+| Device | `device` | *(encoder default)* | Which GPU to use. VAAPI: a render node, default `/dev/dri/renderD128`. NVENC: a GPU index, default the first GPU. |
+| Quality | `quality` | `23` | Quality target, 1–51 (ICQ on VAAPI, constant quality on NVENC). Lower is higher quality and larger files. The same number does not give identical results on different encoders. |
 | Minimum VMAF | `minVmaf` | `94` | Skip files that score below this. `0` disables the check. |
 | VMAF samples | `vmafSamples` | `3` | Number of 20-second segments compared (1–10). |
 | Workers | `workers` | `1` | Concurrent transcodes. |
@@ -102,7 +115,7 @@ Example `config.json`:
 }
 ```
 
-Older versions stored a single `sonarr` and `radarr` entry. Those keys are migrated to services automatically when the file is loaded and disappear the next time settings are saved.
+Older versions stored a single `sonarr` and `radarr` entry, and the GPU as `vaapiDevice`. Those keys are migrated to `services` and `device` automatically when the file is loaded and disappear the next time settings are saved.
 
 ### Command-line flags
 
@@ -113,7 +126,7 @@ Older versions stored a single `sonarr` and `radarr` entry. Those keys are migra
 
 ## Building from source
 
-Requires Go 1.26+, `libmediainfo-dev` (cgo), and `ffmpeg` on your `PATH` with VAAPI and `libvmaf` support. Many distro ffmpeg builds omit `libvmaf`; the Docker image uses a [BtbN](https://github.com/BtbN/FFmpeg-Builds) build that includes it. Alternatively, set the minimum VMAF to `0`.
+Requires Go 1.26+, `libmediainfo-dev` (cgo), and `ffmpeg` on your `PATH` with VAAPI or NVENC and `libvmaf` support. Many distro ffmpeg builds omit `libvmaf`; the Docker image uses a [BtbN](https://github.com/BtbN/FFmpeg-Builds) build that includes it. Alternatively, set the minimum VMAF to `0`.
 
 ```sh
 go run github.com/a-h/templ/cmd/templ@v0.3.1100 generate
@@ -131,7 +144,7 @@ internal/crawler     library scanner
 internal/database    SQLite store and migrations
 internal/media       probing, hashing, hardlink detection
 internal/pool        job queue, verification, replacement
-internal/transcode   ffmpeg (VAAPI) and VMAF scoring
+internal/transcode   ffmpeg, GPU encoders (VAAPI, NVENC) and VMAF scoring
 internal/web         web UI (templ templates, controllers)
 ```
 
