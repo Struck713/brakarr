@@ -21,6 +21,9 @@ import (
 const pollInterval = 5 * time.Second
 const maxDurationDrift = int64(time.Second / time.Microsecond)
 
+// storeTimeout bounds each individual store update.
+const storeTimeout = 30 * time.Second
+
 // Store is the persistence the pool needs to claim and update jobs.
 type Store interface {
 	ClaimNext(ctx context.Context) (*media.Media, error)
@@ -182,7 +185,10 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 		if st, err := os.Stat(item.Path); err == nil {
 			if links := media.LinkCount(st); links > 1 {
 				reason := fmt.Sprintf("hardlinked (%d links), waiting until only one remains", links)
-				if err := p.store.Defer(context.WithoutCancel(ctx), item.Hash, reason); err != nil {
+				sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+				err := p.store.Defer(sctx, item.Hash, reason)
+				cancel()
+				if err != nil {
 					slog.Error("pool: defer", "name", item.Name, "error", err)
 				}
 				return true
@@ -197,43 +203,46 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 	bitDepth, _ := strconv.Atoi(item.BitDepth) // unknown = treat as 8-bit
 	err = p.tc.Transcode(ctx, item.Path, output, bitDepth, job.SetProgress)
 
-	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-
 	switch {
 	case ctx.Err() != nil:
 		os.Remove(output)
-		if err := p.store.Release(dbCtx, item.Hash); err != nil {
-			slog.Error("pool: requeue after shutdown", "name", item.Name, "error", err)
-		}
+		p.release(ctx, item)
 	case err != nil:
 		os.Remove(output)
-		p.fail(dbCtx, item, fmt.Errorf("transcode: %w", err))
+		p.fail(ctx, item, fmt.Errorf("transcode: %w", err))
 	default:
-		p.finish(ctx, dbCtx, item, output)
+		p.finish(ctx, item, output)
 	}
 	return true
+}
+
+// release returns the item to the queue after an interrupted job.
+func (p *Pool) release(ctx context.Context, item *media.Media) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	if err := p.store.Release(ctx, item.Hash); err != nil {
+		slog.Error("pool: requeue after shutdown", "name", item.Name, "error", err)
+	}
 }
 
 // fail logs the cause and marks the item as failed.
 func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 	slog.Error("pool: job failed", "name", item.Name, "error", cause)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
 	if err := p.store.Fail(ctx, item.Hash, cause.Error()); err != nil {
 		slog.Error("pool: mark failed", "name", item.Name, "error", err)
 	}
 }
 
 // finish verifies the transcoded output and replaces the original, failing or skipping as needed.
-// jobCtx bounds the long-running quality check; ctx is for the short store updates.
-func (p *Pool) finish(jobCtx, ctx context.Context, item *media.Media, output string) {
-	next, skipReason, err := p.verify(jobCtx, item, output)
+func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
+	next, skipReason, err := p.verify(ctx, item, output)
 	switch {
-	case err != nil && jobCtx.Err() != nil:
+	case err != nil && ctx.Err() != nil:
 		// Shutdown interrupted the quality check; try again on the next start.
 		os.Remove(output)
-		if err := p.store.Release(ctx, item.Hash); err != nil {
-			slog.Error("pool: requeue after shutdown", "name", item.Name, "error", err)
-		}
+		p.release(ctx, item)
 		return
 	case err != nil:
 		os.Remove(output)
@@ -242,7 +251,9 @@ func (p *Pool) finish(jobCtx, ctx context.Context, item *media.Media, output str
 	case skipReason != "":
 		os.Remove(output)
 		slog.Info("pool: skipped", "name", item.Name, "reason", skipReason)
-		if err := p.store.Skip(ctx, item.Hash, skipReason); err != nil {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+		defer cancel()
+		if err := p.store.Skip(sctx, item.Hash, skipReason); err != nil {
 			slog.Error("pool: mark skipped", "name", item.Name, "error", err)
 		}
 		return
@@ -316,7 +327,9 @@ func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output st
 		return fmt.Errorf("original replaced but re-hash failed: %w", err)
 	}
 	next.Hash, next.Path, next.Name = hash, item.Path, item.Name
-	if err := p.store.Replace(ctx, item.Hash, next); err != nil {
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	if err := p.store.Replace(sctx, item.Hash, next); err != nil {
 		return fmt.Errorf("original replaced but database update failed: %w", err)
 	}
 	return nil
