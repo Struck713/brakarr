@@ -56,7 +56,7 @@ templ MediaPanel(list MediaList) {
 			<div class="empty">No media found yet.</div>
 		} else {
 			@table(list.Items, list.Page)
-			@pager(list)
+			@pager(list.Page, list.Pages, "Total files: "+fmt.Sprint(list.Total), panelURL, "#media-panel")
 		}
 	</div>
 }
@@ -110,33 +110,34 @@ templ table(items []media.Media, page int) {
 	</div>
 }
 
-templ pager(list MediaList) {
-	<nav class="pager" aria-label="Media pages">
-		if list.Pages > 1 {
+// pager renders previous/next controls that load url(page) into target, plus a summary line.
+templ pager(page, pages int, summary string, url func(int) string, target string) {
+	<nav class="pager" aria-label="Pages">
+		if pages > 1 {
 			<div class="pager-controls">
 				<button
 					class="icon-button"
 					aria-label="Previous page"
-					hx-get={ panelURL(list.Page - 1) }
-					hx-target="#media-panel"
+					hx-get={ url(page - 1) }
+					hx-target={ target }
 					hx-swap="outerHTML"
-					disabled?={ list.Page <= 1 }
+					disabled?={ page <= 1 }
 				>
 					@icon("left")
 				</button>
-				<span>{ fmt.Sprint(list.Page) } / { fmt.Sprint(list.Pages) }</span>
+				<span>{ fmt.Sprint(page) } / { fmt.Sprint(pages) }</span>
 				<button
 					class="icon-button"
 					aria-label="Next page"
-					hx-get={ panelURL(list.Page + 1) }
-					hx-target="#media-panel"
+					hx-get={ url(page + 1) }
+					hx-target={ target }
 					hx-swap="outerHTML"
-					disabled?={ list.Page >= list.Pages }
+					disabled?={ page >= pages }
 				>
 					@icon("right")
 				</button>
 			</div>
 		}
-		<div class="pager-total">Total files: { fmt.Sprint(list.Total) }</div>
+		<div class="pager-total">{ summary }</div>
 	</nav>
 }

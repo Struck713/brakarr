@@ -101,8 +101,8 @@ func (d *Database) SetStatus(ctx context.Context, hash []byte, status media.Stat
 func recordHistory(ctx context.Context, tx *sql.Tx, hash []byte, status media.Status, reason string,
 	outputSize *int64, vmaf *float64) error {
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO history (files_hash, status, reason, source_size, output_size, vmaf)
-		SELECT hash, ?, ?, size, ?, ? FROM files WHERE hash = ?`,
+		INSERT INTO history (files_hash, status, reason, source_size, output_size, vmaf, finished_at)
+		SELECT hash, ?, ?, size, ?, ?, unixepoch() FROM files WHERE hash = ?`,
 		status, reason, outputSize, vmaf, hash)
 	if err != nil {
 		return err
@@ -255,6 +255,40 @@ func (d *Database) List(ctx context.Context, limit, offset int) ([]media.Media, 
 			return nil, err
 		}
 		out = append(out, *m)
+	}
+	return out, rows.Err()
+}
+
+// CountHistory returns the total number of history rows.
+func (d *Database) CountHistory(ctx context.Context) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history`).Scan(&n)
+	return n, err
+}
+
+// ListHistory returns a page of history rows, newest first.
+func (d *Database) ListHistory(ctx context.Context, limit, offset int) ([]media.History, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT h.id, h.files_hash, f.name, f.path, h.status, h.reason,
+		       h.source_size, h.output_size, h.vmaf, h.created_at, h.finished_at
+		FROM history h
+		JOIN files f ON f.hash = h.files_hash
+		ORDER BY h.id DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []media.History{}
+	for rows.Next() {
+		var h media.History
+		err := rows.Scan(&h.ID, &h.Hash, &h.Name, &h.Path, &h.Status, &h.Reason,
+			&h.SourceSize, &h.OutputSize, &h.VMAF, &h.CreatedAt, &h.FinishedAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, h)
 	}
 	return out, rows.Err()
 }
