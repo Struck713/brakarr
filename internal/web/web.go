@@ -24,11 +24,17 @@ type Web struct {
 	controllers []Controller
 }
 
+// Store is the persistence the web controllers read from and update.
+type Store interface {
+	controllers.Store
+	controllers.HistoryStore
+}
+
 // NewWeb builds the web interface with its library, activity, settings and services controllers.
-func NewWeb(db controllers.Store, pool *pool.Pool, settings *config.Store) *Web {
+func NewWeb(db Store, pool *pool.Pool, settings *config.Store) *Web {
 	return &Web{controllers: []Controller{
 		controllers.NewLibraryController(db, pool),
-		controllers.NewActivityController(pool),
+		controllers.NewActivityController(db, pool),
 		controllers.NewSettingsController(settings),
 		controllers.NewServicesController(settings),
 	}}

@@ -1,0 +1,98 @@
+package templates
+
+import (
+	"encoding/hex"
+	"fmt"
+	"time"
+
+	"github.com/Struck713/brakarr/internal/media"
+)
+
+// HistoryList is one page of the history table.
+type HistoryList struct {
+	Items []media.History
+	Page  int
+	Pages int
+	Total int
+}
+
+func historyPanelURL(page int) string {
+	return fmt.Sprintf("/history?page=%d", page)
+}
+
+// sizeChange describes the output size relative to the source, e.g. "-42.0%".
+func sizeChange(source int64, output *int64) string {
+	if output == nil || source <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%+.1f%%", (float64(*output)/float64(source)-1)*100)
+}
+
+func formatVMAF(vmaf *float64) string {
+	if vmaf == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f", *vmaf)
+}
+
+func formatFinished(h media.History) string {
+	at := h.CreatedAt
+	if h.FinishedAt != nil {
+		at = *h.FinishedAt
+	}
+	return time.Unix(at, 0).Format("2006-01-02 15:04")
+}
+
+// HistoryPanel is a self-refreshing fragment that keeps the current page across polls.
+templ HistoryPanel(list HistoryList) {
+	<div id="history-panel" hx-get={ historyPanelURL(list.Page) } hx-trigger="every 5s" hx-swap="outerHTML">
+		if list.Total == 0 {
+			<div class="empty">No finished transcodes yet.</div>
+		} else {
+			@historyTable(list.Items)
+			@pager(list.Page, list.Pages, "Total jobs: "+fmt.Sprint(list.Total), historyPanelURL, "#history-panel")
+		}
+	</div>
+}
+
+templ historyTable(items []media.History) {
+	<div class="table-wrap">
+		<table class="table">
+			<thead>
+				<tr>
+					<th scope="col" class="col-icon"><span class="sr-only">State</span></th>
+					<th scope="col">Title</th>
+					<th scope="col">Status</th>
+					<th scope="col">Source</th>
+					<th scope="col">Output</th>
+					<th scope="col">Change</th>
+					<th scope="col">VMAF</th>
+					<th scope="col">Finished</th>
+					<th scope="col">Hash</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, h := range items {
+					{{ label, kind, iconName := statusView(h.Status) }}
+					<tr>
+						<td class={ "col-icon", "status-" + kind }>
+							@icon(iconName)
+						</td>
+						<td class="col-title" title={ h.Path }>{ h.Name }</td>
+						<td><span class={ "label", "label-" + kind } title={ h.Reason }>{ label }</span></td>
+						<td>{ formatBytes(h.SourceSize) }</td>
+						if h.OutputSize != nil {
+							<td>{ formatBytes(*h.OutputSize) }</td>
+						} else {
+							<td class="muted">—</td>
+						}
+						<td>{ sizeChange(h.SourceSize, h.OutputSize) }</td>
+						<td>{ formatVMAF(h.VMAF) }</td>
+						<td>{ formatFinished(h) }</td>
+						<td><code title={ hex.EncodeToString(h.Hash) }>{ shortHash(h.Hash) }</code></td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

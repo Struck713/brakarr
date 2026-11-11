@@ -83,14 +83,19 @@ func (l *LibraryController) list(c *echo.Context, page int) (templates.MediaList
 	if err != nil {
 		return templates.MediaList{}, err
 	}
-	pages := max((total+pageSize-1)/pageSize, 1)
-	page = min(max(page, 1), pages)
+	page, pages := pageBounds(page, total)
 
 	items, err := l.db.List(ctx, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return templates.MediaList{}, err
 	}
 	return templates.MediaList{Items: items, Page: page, Pages: pages, Total: total}, nil
+}
+
+// pageBounds clamps page to the range of pages needed for total rows, returning it and the page count.
+func pageBounds(page, total int) (int, int) {
+	pages := max((total+pageSize-1)/pageSize, 1)
+	return min(max(page, 1), pages), pages
 }
 
 // pageParam reads the page number from the request, defaulting to the first page.

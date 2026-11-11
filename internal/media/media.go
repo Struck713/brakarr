@@ -23,7 +23,6 @@ type Media struct {
 	CreatedAt int64 // unix seconds
 	Status    Status
 	Error     string // last failure reason, if any
-	Attempts  int
 }
 
 // IsHEVC reports whether the file is already HEVC encoded.

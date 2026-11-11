@@ -30,9 +30,9 @@ type Store interface {
 	RequeueRunning(ctx context.Context) error
 	Fail(ctx context.Context, hash []byte, reason string) error
 	Defer(ctx context.Context, hash []byte, reason string) error
-	Skip(ctx context.Context, hash []byte, reason string) error
+	Skip(ctx context.Context, hash []byte, reason string, outputSize int64, vmaf *float64) error
 	Release(ctx context.Context, hash []byte) error
-	Replace(ctx context.Context, oldHash []byte, next *media.Media) error
+	Replace(ctx context.Context, oldHash []byte, next *media.Media, vmaf *float64) error
 }
 
 // Transcoder converts a media file into a new output file.
@@ -237,7 +237,7 @@ func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 
 // finish verifies the transcoded output and replaces the original, failing or skipping as needed.
 func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
-	next, skipReason, err := p.verify(ctx, item, output)
+	next, vmaf, skipReason, err := p.verify(ctx, item, output)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// Shutdown interrupted the quality check; try again on the next start.
@@ -253,13 +253,13 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 		slog.Info("pool: skipped", "name", item.Name, "reason", skipReason)
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 		defer cancel()
-		if err := p.store.Skip(sctx, item.Hash, skipReason); err != nil {
+		if err := p.store.Skip(sctx, item.Hash, skipReason, next.Size, vmaf); err != nil {
 			slog.Error("pool: mark skipped", "name", item.Name, "error", err)
 		}
 		return
 	}
 
-	if err := p.replaceOriginal(ctx, item, output, next); err != nil {
+	if err := p.replaceOriginal(ctx, item, output, next, vmaf); err != nil {
 		os.Remove(output)
 		p.fail(ctx, item, fmt.Errorf("replace original: %w", err))
 		return
@@ -268,14 +268,15 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 }
 
 // verify probes the output and checks it is valid HEVC of matching duration, smaller than the
-// source, and (when enabled) visually close enough to it.
-func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (next *media.Media, skipReason string, err error) {
+// source, and (when enabled) visually close enough to it. On a skip it still returns the probed
+// output and any VMAF score, so the discarded transcode can be recorded.
+func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (next *media.Media, vmaf *float64, skipReason string, err error) {
 	next, err = p.probe(output, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	if !next.IsHEVC() {
-		return nil, "", fmt.Errorf("output is %q, expected HEVC", next.Format)
+		return nil, nil, "", fmt.Errorf("output is %q, expected HEVC", next.Format)
 	}
 	if item.Duration > 0 {
 		drift := next.Duration - item.Duration
@@ -283,31 +284,32 @@ func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (ne
 			drift = -drift
 		}
 		if next.Duration == 0 || drift > maxDurationDrift {
-			return nil, "", fmt.Errorf("duration mismatch: source %dus, output %dus", item.Duration, next.Duration)
+			return nil, nil, "", fmt.Errorf("duration mismatch: source %dus, output %dus", item.Duration, next.Duration)
 		}
 	}
 	if next.Size <= 0 {
-		return nil, "", errors.New("output is empty")
+		return nil, nil, "", errors.New("output is empty")
 	}
 	if item.Size > 0 && next.Size >= item.Size {
-		return nil, fmt.Sprintf("output not smaller (%d >= %d bytes)", next.Size, item.Size), nil
+		return next, nil, fmt.Sprintf("output not smaller (%d >= %d bytes)", next.Size, item.Size), nil
 	}
 	if p.opts.Scorer != nil && p.opts.MinVMAF > 0 {
 		bitDepth, _ := strconv.Atoi(item.BitDepth)
 		score, err := p.opts.Scorer.Score(ctx, item.Path, output, next.Duration, bitDepth, p.opts.VMAFSamples)
 		if err != nil {
-			return nil, "", fmt.Errorf("measure quality: %w", err)
+			return nil, nil, "", fmt.Errorf("measure quality: %w", err)
 		}
 		slog.Info("pool: quality check", "name", item.Name, "vmaf", score, "min", p.opts.MinVMAF)
 		if score < p.opts.MinVMAF {
-			return nil, fmt.Sprintf("quality too low (VMAF %.1f < %.0f)", score, p.opts.MinVMAF), nil
+			return next, &score, fmt.Sprintf("quality too low (VMAF %.1f < %.0f)", score, p.opts.MinVMAF), nil
 		}
+		vmaf = &score
 	}
-	return next, "", nil
+	return next, vmaf, "", nil
 }
 
 // replaceOriginal swaps the source file for the transcoded output and updates the store.
-func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media) error {
+func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output string, next *media.Media, vmaf *float64) error {
 	st, err := os.Stat(item.Path)
 	if err != nil {
 		return err
@@ -329,7 +331,7 @@ func (p *Pool) replaceOriginal(ctx context.Context, item *media.Media, output st
 	next.Hash, next.Path, next.Name = hash, item.Path, item.Name
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 	defer cancel()
-	if err := p.store.Replace(sctx, item.Hash, next); err != nil {
+	if err := p.store.Replace(sctx, item.Hash, next, vmaf); err != nil {
 		return fmt.Errorf("original replaced but database update failed: %w", err)
 	}
 	return nil

@@ -8,10 +8,32 @@ templ LibraryPage(list MediaList) {
 	}
 }
 
-templ ActivityPage(jobs []*pool.Job) {
+const (
+	tabActive  = "active"
+	tabHistory = "history"
+)
+
+// activityLayout wraps the activity pages in the page layout and the tab bar.
+templ activityLayout(tab string) {
 	@layout(navActivity, "Activity") {
+		<nav class="tabs" aria-label="Activity" hx-boost="true">
+			<a href="/activity" { currentPage(tab == tabActive)... }>Active</a>
+			<a href="/activity/history" { currentPage(tab == tabHistory)... }>History</a>
+		</nav>
+		{ children... }
+	}
+}
+
+templ ActivityPage(jobs []*pool.Job) {
+	@activityLayout(tabActive) {
 		<div hx-get="/jobs" hx-trigger="every 2s">
 			@ActiveJobs(jobs)
 		</div>
+	}
+}
+
+templ HistoryPage(list HistoryList) {
+	@activityLayout(tabHistory) {
+		@HistoryPanel(list)
 	}
 }
