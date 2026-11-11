@@ -34,7 +34,7 @@ func Open(path string) (*Database, error) {
 // Close closes the underlying database.
 func (d *Database) Close() error { return d.db.Close() }
 
-const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, error, attempts"
+const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, error"
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -43,7 +43,7 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(s scanner) (*media.Media, error) {
 	m := &media.Media{}
 	err := s.Scan(&m.Hash, &m.Name, &m.Path, &m.Format, &m.BitDepth, &m.Size,
-		&m.Duration, &m.CreatedAt, &m.Status, &m.Error, &m.Attempts)
+		&m.Duration, &m.CreatedAt, &m.Status, &m.Error)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (d *Database) Get(ctx context.Context, hash []byte) (*media.Media, error) {
 func (d *Database) ClaimNext(ctx context.Context) (*media.Media, error) {
 	m, err := scan(d.db.QueryRowContext(ctx, `
 		UPDATE files
-		SET status = 'running', attempts = attempts + 1, error = ''
+		SET status = 'running', error = ''
 		WHERE hash = (SELECT hash FROM files WHERE status = 'pending' ORDER BY created_at, name LIMIT 1)
 		RETURNING `+columns))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -95,22 +95,65 @@ func (d *Database) SetStatus(ctx context.Context, hash []byte, status media.Stat
 	return err
 }
 
-// Fail marks the media as failed with the given reason.
+// recordHistory appends a finished job to the history table, taking the source size from the
+// file's current row, so it must run before that row is updated with the output's metadata.
+// Status must be failed, skipped or complete; a nil outputSize or vmaf is stored as NULL.
+func recordHistory(ctx context.Context, tx *sql.Tx, hash []byte, status media.Status, reason string,
+	outputSize *int64, vmaf *float64) error {
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO history (files_hash, status, reason, source_size, output_size, vmaf)
+		SELECT hash, ?, ?, size, ?, ? FROM files WHERE hash = ?`,
+		status, reason, outputSize, vmaf, hash)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("record history: no file with hash %x", hash)
+	}
+	return nil
+}
+
+// Fail marks the media as failed with the given reason and records it in the history.
 func (d *Database) Fail(ctx context.Context, hash []byte, reason string) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE files SET status = 'failed', error = ? WHERE hash = ?`, reason, hash)
-	return err
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'failed', error = ? WHERE hash = ?`, reason, hash); err != nil {
+		return err
+	}
+	if err := recordHistory(ctx, tx, hash, media.StatusFailed, reason, nil, nil); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Skip marks the media as skipped with the given reason.
-func (d *Database) Skip(ctx context.Context, hash []byte, reason string) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE files SET status = 'skipped', error = ? WHERE hash = ?`, reason, hash)
-	return err
+// Skip marks the media as skipped after a transcode whose output was discarded, and records
+// the output's size and VMAF score (nil if not measured) in the history.
+func (d *Database) Skip(ctx context.Context, hash []byte, reason string, outputSize int64, vmaf *float64) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'skipped', error = ? WHERE hash = ?`, reason, hash); err != nil {
+		return err
+	}
+	if err := recordHistory(ctx, tx, hash, media.StatusSkipped, reason, &outputSize, vmaf); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Defer marks the media as deferred with the given reason and refunds the attempt.
+// Defer marks the media as deferred with the given reason.
 func (d *Database) Defer(ctx context.Context, hash []byte, reason string) error {
 	_, err := d.db.ExecContext(ctx,
-		`UPDATE files SET status = 'deferred', error = ?, attempts = MAX(attempts - 1, 0) WHERE hash = ?`, reason, hash)
+		`UPDATE files SET status = 'deferred', error = ? WHERE hash = ?`, reason, hash)
 	return err
 }
 
@@ -137,10 +180,10 @@ func (d *Database) Relocate(ctx context.Context, hash []byte, path, name string)
 	return err
 }
 
-// Release returns a claimed item to pending and refunds the attempt.
+// Release returns a claimed item to pending.
 func (d *Database) Release(ctx context.Context, hash []byte) error {
 	_, err := d.db.ExecContext(ctx,
-		`UPDATE files SET status = 'pending', attempts = MAX(attempts - 1, 0) WHERE hash = ?`, hash)
+		`UPDATE files SET status = 'pending' WHERE hash = ?`, hash)
 	return err
 }
 
@@ -161,8 +204,9 @@ func (d *Database) RequeueRunning(ctx context.Context) error {
 	return err
 }
 
-// Replace swaps an item's hash and metadata for the transcoded file and marks it complete.
-func (d *Database) Replace(ctx context.Context, oldHash []byte, next *media.Media) error {
+// Replace swaps an item's hash and metadata for the transcoded file, marks it complete
+// and records it in the history with the output's VMAF score (nil if not measured).
+func (d *Database) Replace(ctx context.Context, oldHash []byte, next *media.Media, vmaf *float64) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -170,6 +214,11 @@ func (d *Database) Replace(ctx context.Context, oldHash []byte, next *media.Medi
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM files WHERE hash = ? AND hash != ?`, next.Hash, oldHash); err != nil {
+		return err
+	}
+	// Recorded before the update so source_size is the original's; the update's
+	// ON UPDATE CASCADE then moves the row to the new hash.
+	if err := recordHistory(ctx, tx, oldHash, media.StatusComplete, "", &next.Size, vmaf); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
