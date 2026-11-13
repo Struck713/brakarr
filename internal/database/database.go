@@ -188,15 +188,50 @@ func (d *Database) Release(ctx context.Context, hash []byte) error {
 	return err
 }
 
-// Retry returns a failed item to pending, reporting whether it changed.
-func (d *Database) Retry(ctx context.Context, hash []byte) (bool, error) {
-	res, err := d.db.ExecContext(ctx,
-		`UPDATE files SET status = 'pending', error = '' WHERE hash = ? AND status = 'failed'`, hash)
+// requeueable matches files that may go back to the queue: failed ones, and ones skipped after
+// a transcode that other settings might make worth keeping. Already-HEVC files never match.
+// Keep in sync with media.Requeueable.
+const requeueable = `(status = 'failed' OR (status = 'skipped' AND skip_kind IN ('quality', 'not_smaller')))
+	AND lower(format) <> 'hevc'`
+
+// Requeue returns a failed or retryable skipped item to pending, reporting whether it changed.
+func (d *Database) Requeue(ctx context.Context, hash []byte) (bool, error) {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE files SET status = 'pending', skip_kind = '', error = ''
+		WHERE hash = ? AND `+requeueable, hash)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// passingQualitySkips selects files skipped for low quality whose last transcode scored at
+// least the bound minimum VMAF. A minimum of 0 means the check is off, so all of them pass.
+const passingQualitySkips = `
+	SELECT f.hash FROM files f
+	JOIN history h ON h.id = (SELECT MAX(id) FROM history WHERE files_hash = f.hash)
+	WHERE f.status = 'skipped' AND f.skip_kind = 'quality' AND lower(f.format) <> 'hevc'
+	  AND h.status = 'skipped' AND (?1 <= 0 OR h.vmaf >= ?1)`
+
+// CountPassingQualitySkips counts the files skipped for low quality that would pass minVMAF.
+func (d *Database) CountPassingQualitySkips(ctx context.Context, minVMAF float64) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+passingQualitySkips+`)`, minVMAF).Scan(&n)
+	return n, err
+}
+
+// RequeuePassingQualitySkips returns the files skipped for low quality that would pass minVMAF
+// to the queue, reporting how many were requeued.
+func (d *Database) RequeuePassingQualitySkips(ctx context.Context, minVMAF float64) (int, error) {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE files SET status = 'pending', skip_kind = '', error = ''
+		WHERE hash IN (`+passingQualitySkips+`)`, minVMAF)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // RequeueRunning resets items left running by a previous run back to pending.

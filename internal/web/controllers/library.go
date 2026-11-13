@@ -18,7 +18,7 @@ const pageSize = 50
 type Store interface {
 	List(ctx context.Context, limit, offset int) ([]media.Media, error)
 	Count(ctx context.Context) (int, error)
-	Retry(ctx context.Context, hash []byte) (bool, error)
+	Requeue(ctx context.Context, hash []byte) (bool, error)
 }
 
 // LibraryController serves the media library page.
@@ -36,7 +36,7 @@ func NewLibraryController(db Store, pool *pool.Pool) *LibraryController {
 func (l *LibraryController) Register(e *echo.Echo) {
 	e.GET("/", l.Index)
 	e.GET("/media", l.Panel)
-	e.POST("/media/:hash/retry", l.Retry)
+	e.POST("/media/:hash/requeue", l.Requeue)
 }
 
 // Index renders the full library page.
@@ -53,17 +53,27 @@ func (l *LibraryController) Panel(c *echo.Context) error {
 	return l.panel(c)
 }
 
-// Retry requeues a failed item and re-renders the panel.
-func (l *LibraryController) Retry(c *echo.Context) error {
+// Requeue returns a failed or skipped item to the queue and re-renders the panel.
+func (l *LibraryController) Requeue(c *echo.Context) error {
+	if err := requeue(c, l.db, l.pool); err != nil {
+		return err
+	}
+	return l.panel(c)
+}
+
+// requeue returns the item named by the :hash parameter to the queue and wakes the pool.
+func requeue(c *echo.Context, db interface {
+	Requeue(ctx context.Context, hash []byte) (bool, error)
+}, pool *pool.Pool) error {
 	hash, err := hex.DecodeString(c.Param("hash"))
 	if err != nil || len(hash) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid hash")
 	}
-	if _, err := l.db.Retry(c.Request().Context(), hash); err != nil {
+	if _, err := db.Requeue(c.Request().Context(), hash); err != nil {
 		return err
 	}
-	l.pool.Notify()
-	return l.panel(c)
+	pool.Notify()
+	return nil
 }
 
 // panel renders the library panel for the requested page.

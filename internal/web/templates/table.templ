@@ -28,8 +28,8 @@ func panelURL(page int) string {
 	return fmt.Sprintf("/media?page=%d", page)
 }
 
-func retryURL(hash []byte, page int) string {
-	return fmt.Sprintf("/media/%s/retry?page=%d", hex.EncodeToString(hash), page)
+func requeueURL(hash []byte, page int) string {
+	return fmt.Sprintf("/media/%s/requeue?page=%d", hex.EncodeToString(hash), page)
 }
 
 func statusView(status media.Status) (label, kind, iconName string) {
@@ -90,12 +90,12 @@ templ table(items []media.Media, page int) {
 						<td><code title={ hex.EncodeToString(item.Hash) }>{ shortHash(item.Hash) }</code></td>
 						<td><span class={ "label", "label-" + kind } title={ item.Error }>{ label }</span></td>
 						<td class="col-end">
-							if item.Status == media.StatusFailed {
+							if item.Requeueable() {
 								<button
 									class="icon-button"
-									title="Retry"
-									aria-label={ "Retry " + item.Name }
-									hx-post={ retryURL(item.Hash, page) }
+									title="Requeue"
+									aria-label={ "Requeue " + item.Name }
+									hx-post={ requeueURL(item.Hash, page) }
 									hx-target="#media-panel"
 									hx-swap="outerHTML"
 								>
