@@ -64,22 +64,23 @@ func run() error {
 	// transcoding stays disabled.
 	encoder, _ := transcode.NewEncoder(cfg.Encoder, cfg.Device)
 	ffmpeg := transcode.NewFFmpeg(encoder, cfg.Quality)
-	poolOpts := pool.Options{
-		Workers:        cfg.Workers,
+	poolOpts := pool.Options{Workers: cfg.Workers}
+	poolSettings := pool.Settings{
+		Transcoder:     ffmpeg,
 		WorkDir:        cfg.WorkDir,
 		SkipHardlinked: cfg.SkipHardlinked,
 		MinVMAF:        float64(cfg.MinVMAF),
 		VMAFSamples:    cfg.VMAFSamples,
 	}
 	if cfg.MinVMAF > 0 {
-		poolOpts.Scorer = ffmpeg
+		poolSettings.Scorer = ffmpeg
 	}
 	if apps := cfg.Apps(); settingsErr == nil && len(apps) > 0 {
 		notifier := arr.NewNotifier(apps, cfg.ArrPathMap)
 		poolOpts.OnReplaced = notifier.Replaced
 		go notifier.Run(ctx)
 	}
-	jobs := pool.NewPool(db, ffmpeg, poolOpts)
+	jobs := pool.NewPool(db, poolOpts)
 
 	if settingsErr == nil {
 		if err := ffmpeg.Preflight(ctx); err != nil {
@@ -89,6 +90,9 @@ func run() error {
 			if err := ffmpeg.PreflightVMAF(); err != nil {
 				return err
 			}
+		}
+		if err := jobs.Configure(poolSettings); err != nil {
+			return err
 		}
 		if err := jobs.Start(ctx); err != nil {
 			return err

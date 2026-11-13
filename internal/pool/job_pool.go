@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Struck713/brakarr/internal/media"
@@ -46,9 +47,10 @@ type Scorer interface {
 	Score(ctx context.Context, source, output string, durationUs int64, bitDepth, samples int) (float64, error)
 }
 
-// Options configures a Pool.
-type Options struct {
-	Workers        int
+// Settings are the pool options that can change while it runs. Each job uses the settings in
+// effect when it was claimed, so a change never interrupts a running transcode.
+type Settings struct {
+	Transcoder     Transcoder
 	WorkDir        string
 	SkipHardlinked bool
 
@@ -57,6 +59,11 @@ type Options struct {
 	Scorer      Scorer
 	MinVMAF     float64
 	VMAFSamples int
+}
+
+// Options configures a Pool.
+type Options struct {
+	Workers int
 
 	// OnReplaced is called with the path of every original that was replaced.
 	OnReplaced func(path string)
@@ -64,26 +71,31 @@ type Options struct {
 
 // Pool runs transcode jobs on a set of concurrent workers.
 type Pool struct {
-	store Store
-	tc    Transcoder
-	opts  Options
-	wake  chan struct{}
+	store    Store
+	opts     Options
+	settings atomic.Pointer[Settings]
+	wake     chan struct{}
 
 	probe func(path string, hash []byte) (*media.Media, error)
 	hash  func(path string) ([]byte, error)
 
 	mu     sync.RWMutex
 	jobs   map[int]*Job // active jobs by worker ID
+	ctx    context.Context
 	cancel context.CancelFunc
+	size   int             // wanted number of workers
+	retire []chan struct{} // one per running worker; closed to retire it after its job
+	nextID int
 	wg     sync.WaitGroup
 }
 
-// NewPool creates a Pool using the given store, transcoder and options.
-func NewPool(store Store, tc Transcoder, opts Options) *Pool {
+// NewPool creates a Pool using the given store and options. It needs settings, from Configure,
+// before it can start.
+func NewPool(store Store, opts Options) *Pool {
 	return &Pool{
 		store: store,
-		tc:    tc,
 		opts:  opts,
+		size:  opts.Workers,
 		wake:  make(chan struct{}, 1),
 		probe: media.Probe,
 		hash:  media.Hash,
@@ -91,26 +103,65 @@ func NewPool(store Store, tc Transcoder, opts Options) *Pool {
 	}
 }
 
+// Configure sets the settings used by jobs claimed from now on. Running jobs keep theirs.
+func (p *Pool) Configure(s Settings) error {
+	if s.Transcoder == nil {
+		return errors.New("pool: no transcoder")
+	}
+	if err := os.MkdirAll(s.WorkDir, 0o755); err != nil {
+		return fmt.Errorf("create work dir: %w", err)
+	}
+	p.settings.Store(&s)
+	return nil
+}
+
 // Start launches the workers and returns once they are running.
 func (p *Pool) Start(parent context.Context) error {
-	if err := os.MkdirAll(p.opts.WorkDir, 0o755); err != nil {
-		return fmt.Errorf("create work dir: %w", err)
+	s := p.settings.Load()
+	if s == nil {
+		return errors.New("pool: started before it was configured")
 	}
 	if err := p.store.RequeueRunning(parent); err != nil {
 		return fmt.Errorf("requeue orphaned jobs: %w", err)
 	}
-	p.cleanWorkDir()
+	p.cleanWorkDir(s.WorkDir)
 
-	ctx, cancel := context.WithCancel(parent)
 	p.mu.Lock()
-	p.cancel = cancel
-	p.mu.Unlock()
-
-	for id := range p.opts.Workers {
-		p.wg.Add(1)
-		go p.worker(ctx, id)
-	}
+	defer p.mu.Unlock()
+	p.ctx, p.cancel = context.WithCancel(parent)
+	p.resize()
 	return nil
+}
+
+// Resize changes the number of workers. Extra workers finish their current job before exiting.
+func (p *Pool) Resize(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if n == p.size {
+		return
+	}
+	slog.Info("pool: workers changed", "from", p.size, "to", n)
+	p.size = n
+	p.resize()
+}
+
+// resize starts or retires workers to match the wanted size. The caller must hold p.mu.
+func (p *Pool) resize() {
+	if p.ctx == nil || p.ctx.Err() != nil {
+		return // not started, or stopping
+	}
+	for len(p.retire) < p.size {
+		retire := make(chan struct{})
+		p.retire = append(p.retire, retire)
+		p.wg.Add(1)
+		go p.worker(p.ctx, p.nextID, retire)
+		p.nextID++
+	}
+	for len(p.retire) > p.size {
+		last := len(p.retire) - 1
+		close(p.retire[last])
+		p.retire = p.retire[:last]
+	}
 }
 
 // Stop cancels the workers and waits for them to exit.
@@ -144,19 +195,29 @@ func (p *Pool) Jobs() []*Job {
 	return jobs
 }
 
-// worker processes jobs until the context is cancelled.
-func (p *Pool) worker(ctx context.Context, id int) {
+// worker processes jobs until the context is cancelled or it is retired.
+func (p *Pool) worker(ctx context.Context, id int, retire <-chan struct{}) {
 	defer p.wg.Done()
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	retired := func() bool {
+		select {
+		case <-retire:
+			return true
+		default:
+			return false
+		}
+	}
 	for {
-		for ctx.Err() == nil && p.runNext(ctx, id) {
+		for ctx.Err() == nil && !retired() && p.runNext(ctx, id) {
 		}
 
 		select {
 		case <-ctx.Done():
+			return
+		case <-retire:
 			return
 		case <-ticker.C:
 		case <-p.wake:
@@ -177,11 +238,12 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 		return false
 	}
 
+	s := p.settings.Load()
 	job := NewJob(item)
 	p.setJob(id, job)
 	defer p.clearJob(id)
 
-	if p.opts.SkipHardlinked {
+	if s.SkipHardlinked {
 		if st, err := os.Stat(item.Path); err == nil {
 			if links := media.LinkCount(st); links > 1 {
 				reason := fmt.Sprintf("hardlinked (%d links), waiting until only one remains", links)
@@ -197,11 +259,11 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 	}
 
 	ext := strings.ToLower(filepath.Ext(item.Path))
-	output := filepath.Join(p.opts.WorkDir, hex.EncodeToString(item.Hash)+ext)
+	output := filepath.Join(s.WorkDir, hex.EncodeToString(item.Hash)+ext)
 	os.Remove(output)
 
 	bitDepth, _ := strconv.Atoi(item.BitDepth) // unknown = treat as 8-bit
-	err = p.tc.Transcode(ctx, item.Path, output, bitDepth, job.SetProgress)
+	err = s.Transcoder.Transcode(ctx, item.Path, output, bitDepth, job.SetProgress)
 
 	switch {
 	case ctx.Err() != nil:
@@ -211,7 +273,7 @@ func (p *Pool) runNext(ctx context.Context, id int) bool {
 		os.Remove(output)
 		p.fail(ctx, item, fmt.Errorf("transcode: %w", err))
 	default:
-		p.finish(ctx, item, output)
+		p.finish(ctx, s, item, output)
 	}
 	return true
 }
@@ -236,8 +298,8 @@ func (p *Pool) fail(ctx context.Context, item *media.Media, cause error) {
 }
 
 // finish verifies the transcoded output and replaces the original, failing or skipping as needed.
-func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
-	next, vmaf, skipReason, err := p.verify(ctx, item, output)
+func (p *Pool) finish(ctx context.Context, s *Settings, item *media.Media, output string) {
+	next, vmaf, skipReason, err := p.verify(ctx, s, item, output)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// Shutdown interrupted the quality check; try again on the next start.
@@ -270,7 +332,7 @@ func (p *Pool) finish(ctx context.Context, item *media.Media, output string) {
 // verify probes the output and checks it is valid HEVC of matching duration, smaller than the
 // source, and (when enabled) visually close enough to it. On a skip it still returns the probed
 // output and any VMAF score, so the discarded transcode can be recorded.
-func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (next *media.Media, vmaf *float64, skipReason string, err error) {
+func (p *Pool) verify(ctx context.Context, s *Settings, item *media.Media, output string) (next *media.Media, vmaf *float64, skipReason string, err error) {
 	next, err = p.probe(output, nil)
 	if err != nil {
 		return nil, nil, "", err
@@ -293,15 +355,15 @@ func (p *Pool) verify(ctx context.Context, item *media.Media, output string) (ne
 	if item.Size > 0 && next.Size >= item.Size {
 		return next, nil, fmt.Sprintf("output not smaller (%d >= %d bytes)", next.Size, item.Size), nil
 	}
-	if p.opts.Scorer != nil && p.opts.MinVMAF > 0 {
+	if s.Scorer != nil && s.MinVMAF > 0 {
 		bitDepth, _ := strconv.Atoi(item.BitDepth)
-		score, err := p.opts.Scorer.Score(ctx, item.Path, output, next.Duration, bitDepth, p.opts.VMAFSamples)
+		score, err := s.Scorer.Score(ctx, item.Path, output, next.Duration, bitDepth, s.VMAFSamples)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("measure quality: %w", err)
 		}
-		slog.Info("pool: quality check", "name", item.Name, "vmaf", score, "min", p.opts.MinVMAF)
-		if score < p.opts.MinVMAF {
-			return next, &score, fmt.Sprintf("quality too low (VMAF %.1f < %.0f)", score, p.opts.MinVMAF), nil
+		slog.Info("pool: quality check", "name", item.Name, "vmaf", score, "min", s.MinVMAF)
+		if score < s.MinVMAF {
+			return next, &score, fmt.Sprintf("quality too low (VMAF %.1f < %.0f)", score, s.MinVMAF), nil
 		}
 		vmaf = &score
 	}
@@ -395,15 +457,15 @@ func (p *Pool) clearJob(id int) {
 }
 
 // cleanWorkDir removes leftover files from the work directory.
-func (p *Pool) cleanWorkDir() {
-	entries, err := os.ReadDir(p.opts.WorkDir)
+func (p *Pool) cleanWorkDir(dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		slog.Warn("pool: read work dir", "error", err)
 		return
 	}
 	for _, e := range entries {
 		if e.Type().IsRegular() {
-			os.Remove(filepath.Join(p.opts.WorkDir, e.Name()))
+			os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
 }
