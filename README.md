@@ -70,7 +70,7 @@ For an NVIDIA GPU, replace `group_add` and `devices` with a GPU reservation, and
               capabilities: [gpu, video]
 ```
 
-Then open <http://localhost:1323>, go to **Settings**, and set the crawl path (for example `/data/media`). Settings are saved to `/config/config.json`. Save, then restart the container: changes to settings take effect on restart.
+Then open <http://localhost:1323>, go to **Settings**, and set the crawl path (for example `/data/media`). Settings are saved to `/config/config.json` and take effect as soon as you save them.
 
 Mount your media at the **same path** your Sonarr/Radarr containers use. This keeps hardlink detection accurate and avoids needing path mappings.
 
@@ -78,7 +78,9 @@ Mount your media at the **same path** your Sonarr/Radarr containers use. This ke
 
 ## Configuration
 
-Everything is edited on the Settings page and stored in a JSON file (`-config`, default `config.json`). Invalid settings disable transcoding (the UI stays up) until they are fixed and Brakarr is restarted.
+Everything is edited on the Settings page and stored in a JSON file (`-config`, default `config.json`). Changes apply when saved, without a restart: running transcodes finish with the settings they started with, and the next job uses the new ones. Lowering **Workers** lets the extra workers finish their current job first. Only the listen address and database path need a restart.
+
+Invalid settings disable transcoding (the UI stays up and shows why) until they are fixed. A save is rejected if the encoder or device fails its check, or if VMAF is enabled and ffmpeg lacks libvmaf. Edits made directly to the JSON file are read at startup only.
 
 | Setting | JSON key | Default | Description |
 | --- | --- | --- | --- |
@@ -144,6 +146,7 @@ internal/crawler     library scanner
 internal/database    SQLite store and migrations
 internal/media       probing, hashing, hardlink detection
 internal/pool        job queue, verification, replacement
+internal/supervisor  runs the pool, crawler and notifier and applies saved settings
 internal/transcode   ffmpeg, GPU encoders (VAAPI, NVENC) and VMAF scoring
 internal/web         web UI (templ templates, controllers)
 ```
