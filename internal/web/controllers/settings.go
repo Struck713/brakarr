@@ -12,14 +12,32 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
+// Runtime reports the state of the components that saved settings are applied to.
+type Runtime interface {
+	// Disabled returns why transcoding is not running, or nil if it is.
+	Disabled() error
+	// NeedsRestart lists the saved settings that only take effect after a restart.
+	NeedsRestart() []string
+}
+
 // SettingsController serves the settings page and persists changes.
 type SettingsController struct {
 	settings *config.Store
+	runtime  Runtime
 }
 
 // NewSettingsController creates a SettingsController backed by the config store.
-func NewSettingsController(settings *config.Store) *SettingsController {
-	return &SettingsController{settings: settings}
+func NewSettingsController(settings *config.Store, runtime Runtime) *SettingsController {
+	return &SettingsController{settings: settings, runtime: runtime}
+}
+
+// view builds the settings page view for cfg with the current runtime state.
+func (s *SettingsController) view(cfg config.Config) templates.SettingsView {
+	v := templates.SettingsView{Config: cfg, Path: s.settings.Path(), Restart: s.runtime.NeedsRestart()}
+	if err := s.runtime.Disabled(); err != nil {
+		v.Disabled = splitErrors(err)
+	}
+	return v
 }
 
 // Register adds the settings routes to the router.
@@ -30,19 +48,17 @@ func (s *SettingsController) Register(e *echo.Echo) {
 
 // Show renders the settings page with the current configuration.
 func (s *SettingsController) Show(c *echo.Context) error {
-	return Render(c, http.StatusOK, templates.SettingsPage(templates.SettingsView{
-		Config: s.settings.Get(), Path: s.settings.Path(),
-	}))
+	return Render(c, http.StatusOK, templates.SettingsPage(s.view(s.settings.Get())))
 }
 
 // Save validates the submitted form and writes the new configuration.
 func (s *SettingsController) Save(c *echo.Context) error {
 	cfg, err := s.fromForm(c)
-	view := templates.SettingsView{Config: cfg, Path: s.settings.Path()}
 	if err == nil {
 		err = s.settings.Save(cfg)
 	}
 	status := http.StatusOK
+	view := s.view(cfg)
 	if err != nil {
 		status = http.StatusUnprocessableEntity
 		view.Errors = splitErrors(err)
