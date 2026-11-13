@@ -34,7 +34,7 @@ func Open(path string) (*Database, error) {
 // Close closes the underlying database.
 func (d *Database) Close() error { return d.db.Close() }
 
-const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, error"
+const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, skip_kind, error"
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -43,7 +43,7 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(s scanner) (*media.Media, error) {
 	m := &media.Media{}
 	err := s.Scan(&m.Hash, &m.Name, &m.Path, &m.Format, &m.BitDepth, &m.Size,
-		&m.Duration, &m.CreatedAt, &m.Status, &m.Error)
+		&m.Duration, &m.CreatedAt, &m.Status, &m.SkipKind, &m.Error)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +57,9 @@ func (d *Database) Insert(ctx context.Context, m *media.Media) (bool, error) {
 		status = media.StatusPending
 	}
 	res, err := d.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO files (hash, name, path, format, bit_depth, size, duration, status, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.Hash, m.Name, m.Path, m.Format, m.BitDepth, m.Size, m.Duration, status, m.Error)
+		INSERT OR IGNORE INTO files (hash, name, path, format, bit_depth, size, duration, status, skip_kind, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.Hash, m.Name, m.Path, m.Format, m.BitDepth, m.Size, m.Duration, status, m.SkipKind, m.Error)
 	if err != nil {
 		return false, err
 	}
@@ -80,7 +80,7 @@ func (d *Database) Get(ctx context.Context, hash []byte) (*media.Media, error) {
 func (d *Database) ClaimNext(ctx context.Context) (*media.Media, error) {
 	m, err := scan(d.db.QueryRowContext(ctx, `
 		UPDATE files
-		SET status = 'running', error = ''
+		SET status = 'running', skip_kind = '', error = ''
 		WHERE hash = (SELECT hash FROM files WHERE status = 'pending' ORDER BY created_at, name LIMIT 1)
 		RETURNING `+columns))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -134,14 +134,15 @@ func (d *Database) Fail(ctx context.Context, hash []byte, reason string) error {
 
 // Skip marks the media as skipped after a transcode whose output was discarded, and records
 // the output's size and VMAF score (nil if not measured) in the history.
-func (d *Database) Skip(ctx context.Context, hash []byte, reason string, outputSize int64, vmaf *float64) error {
+func (d *Database) Skip(ctx context.Context, hash []byte, kind media.SkipKind, reason string, outputSize int64, vmaf *float64) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'skipped', error = ? WHERE hash = ?`, reason, hash); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'skipped', skip_kind = ?, error = ? WHERE hash = ?`,
+		kind, reason, hash); err != nil {
 		return err
 	}
 	if err := recordHistory(ctx, tx, hash, media.StatusSkipped, reason, &outputSize, vmaf); err != nil {
