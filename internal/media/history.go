@@ -13,4 +13,11 @@ type History struct {
 	VMAF       *float64 // nil when the quality check did not run
 	CreatedAt  int64    // unix seconds
 	FinishedAt *int64   // unix seconds
+
+	// The file's current state, which may have changed since this job.
+	FileStatus   Status
+	FileSkipKind SkipKind
 }
+
+// Requeueable reports whether the job's file can go back to the queue now.
+func (h *History) Requeueable() bool { return Requeueable(h.FileStatus, h.FileSkipKind) }
