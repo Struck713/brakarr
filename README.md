@@ -22,6 +22,8 @@ Brakarr shrinks your media library by transcoding H.264 (and other) video to HEV
 
 Files end up as `pending`, `running`, `complete`, `skipped`, `deferred` or `failed`, all visible in the UI.
 
+Failed files, and files skipped because the output was too low in quality or not smaller, can be requeued from the library or the job history. Already-HEVC and completed files cannot, since their original is gone or never needed transcoding. When files were skipped for low quality but their last score meets the current minimum VMAF (for example after lowering it), the Settings page offers to requeue them all.
+
 ## Requirements
 
 - Linux host with a VAAPI-capable Intel or AMD GPU (for example `/dev/dri/renderD128`), or an NVIDIA GPU with the NVIDIA driver and, for Docker, the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
