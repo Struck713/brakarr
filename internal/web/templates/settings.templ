@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Struck713/brakarr/internal/config"
@@ -14,84 +15,113 @@ type SettingsView struct {
 	Errors   []string
 	Disabled []string // why transcoding is not running, empty when it is
 	Restart  []string // saved settings that only take effect after a restart
+
+	MinVMAF      int // saved minimum VMAF, which PassingSkips is counted against
+	PassingSkips int // files skipped for low quality whose last score passes MinVMAF
+	Requeued     int // files just requeued from PassingSkips
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 func joinExtensions(exts []string) string { return strings.Join(exts, ", ") }
 
 templ SettingsPage(v SettingsView) {
 	@settingsLayout(tabGeneral) {
-		<form class="settings" method="post" action="/settings">
-			if v.Saved {
-				<div class="notice notice-success">Saved to <code>{ v.Path }</code> and applied. Running transcodes finish with their previous settings.</div>
+		<div class="settings">
+			if v.Requeued > 0 {
+				<div class="notice notice-success">Requeued { plural(v.Requeued, "file", "files") }.</div>
 			}
-			if len(v.Restart) > 0 {
-				<div class="notice notice-warning">Restart Brakarr to apply the new { strings.Join(v.Restart, " and ") }.</div>
+			if v.PassingSkips > 0 {
+				<form class="notice notice-warning notice-action" method="post" action="/settings/requeue-quality">
+					<span>
+						if v.MinVMAF > 0 {
+							{ plural(v.PassingSkips, "file was", "files were") } skipped for low quality but scored at least the current minimum VMAF of { fmt.Sprint(v.MinVMAF) }.
+						} else {
+							{ plural(v.PassingSkips, "file was", "files were") } skipped for low quality, and the VMAF check is now off.
+						}
+						The scores were measured with the quality setting in use at the time.
+					</span>
+					<button class="button button-quiet" type="submit">Requeue</button>
+				</form>
 			}
-			if len(v.Disabled) > 0 {
-				<div class="notice notice-danger">
-					Transcoding is disabled until these are fixed:
-					<ul>
-						for _, e := range v.Disabled {
-							<li>{ e }</li>
-						}
-					</ul>
+			<form method="post" action="/settings">
+				if v.Saved {
+					<div class="notice notice-success">Saved to <code>{ v.Path }</code> and applied. Running transcodes finish with their previous settings.</div>
+				}
+				if len(v.Restart) > 0 {
+					<div class="notice notice-warning">Restart Brakarr to apply the new { strings.Join(v.Restart, " and ") }.</div>
+				}
+				if len(v.Disabled) > 0 {
+					<div class="notice notice-danger">
+						Transcoding is disabled until these are fixed:
+						<ul>
+							for _, e := range v.Disabled {
+								<li>{ e }</li>
+							}
+						</ul>
+					</div>
+				}
+				if len(v.Errors) > 0 {
+					<div class="notice notice-danger">
+						<ul>
+							for _, e := range v.Errors {
+								<li>{ e }</li>
+							}
+						</ul>
+					</div>
+				}
+				<fieldset>
+					<legend>Library</legend>
+					@textField("crawlPath", "Media path", v.Config.CrawlPath, "Directory scanned for media.")
+					@textField("extensions", "Extensions", joinExtensions(v.Config.Extensions), "Comma separated. Only .mkv and .mp4 are supported.")
+					@textField("crawlInterval", "Scan interval", v.Config.CrawlInterval.String(), "How often to scan, such as 10m. 0s scans once at startup.")
+					@textField("minFileAge", "Minimum file age", v.Config.MinFileAge.String(), "Skip files modified more recently than this (still copying).")
+					@checkField("skipHardlinked", "Wait for hardlinks", v.Config.SkipHardlinked, "Wait to replace files that are still hardlinked (e.g. a torrent still seeding). Replacing them early uses extra disk space.")
+				</fieldset>
+				<fieldset>
+					<legend>Transcoding</legend>
+					<div class="field">
+						<label for="encoder">Encoder</label>
+						<select id="encoder" name="encoder">
+							for _, e := range transcode.Encoders() {
+								<option value={ e.ID } selected?={ e.ID == v.Config.Encoder }>{ e.Label }</option>
+							}
+						</select>
+						<span class="hint">The kind of GPU that transcodes.</span>
+					</div>
+					@textField("device", "Device", v.Config.Device, "Which GPU to use. VAAPI: a render node, such as /dev/dri/renderD128. NVENC: a GPU index, such as 0. Blank uses the default.")
+					@numberField("quality", "Quality", v.Config.Quality, "HEVC quality target, 1-51 (lower is better quality and a larger file). Around 21-26 is a good range.")
+					@numberField("minVmaf", "Minimum VMAF", v.Config.MinVMAF, "Keep the original when the transcode scores below this against it (0-100, about 94 is visually clean). 0 disables the check.")
+					@numberField("vmafSamples", "VMAF samples", v.Config.VMAFSamples, "Number of 20 second segments compared per file. More is more thorough but slower.")
+					@numberField("workers", "Workers", v.Config.Workers, "Simultaneous transcodes.")
+					@textField("workDir", "Work directory", v.Config.WorkDir, "Where transcodes are written before replacing the original.")
+				</fieldset>
+				<fieldset>
+					<legend>System</legend>
+					@textField("listenAddr", "Listen address", v.Config.ListenAddr, "The web UI has no authentication; keep it on a trusted network. Takes effect after a restart.")
+					<div class="field">
+						<label for="logLevel">Log level</label>
+						<select id="logLevel" name="logLevel">
+							for _, l := range []string{"debug", "info", "warn", "error"} {
+								<option value={ l } selected?={ l == v.Config.LogLevel }>{ l }</option>
+							}
+						</select>
+					</div>
+					<div class="field">
+						<label for="dbPath">Database path</label>
+						<input id="dbPath" name="dbPath" type="text" value={ v.Config.DBPath } spellcheck="false"/>
+						<span class="hint">Takes effect after a restart.</span>
+					</div>
+				</fieldset>
+				<div class="actions">
+					<button class="button" type="submit">Save</button>
 				</div>
-			}
-			if len(v.Errors) > 0 {
-				<div class="notice notice-danger">
-					<ul>
-						for _, e := range v.Errors {
-							<li>{ e }</li>
-						}
-					</ul>
-				</div>
-			}
-			<fieldset>
-				<legend>Library</legend>
-				@textField("crawlPath", "Media path", v.Config.CrawlPath, "Directory scanned for media.")
-				@textField("extensions", "Extensions", joinExtensions(v.Config.Extensions), "Comma separated. Only .mkv and .mp4 are supported.")
-				@textField("crawlInterval", "Scan interval", v.Config.CrawlInterval.String(), "How often to scan, such as 10m. 0s scans once at startup.")
-				@textField("minFileAge", "Minimum file age", v.Config.MinFileAge.String(), "Skip files modified more recently than this (still copying).")
-				@checkField("skipHardlinked", "Wait for hardlinks", v.Config.SkipHardlinked, "Wait to replace files that are still hardlinked (e.g. a torrent still seeding). Replacing them early uses extra disk space.")
-			</fieldset>
-			<fieldset>
-				<legend>Transcoding</legend>
-				<div class="field">
-					<label for="encoder">Encoder</label>
-					<select id="encoder" name="encoder">
-						for _, e := range transcode.Encoders() {
-							<option value={ e.ID } selected?={ e.ID == v.Config.Encoder }>{ e.Label }</option>
-						}
-					</select>
-					<span class="hint">The kind of GPU that transcodes.</span>
-				</div>
-				@textField("device", "Device", v.Config.Device, "Which GPU to use. VAAPI: a render node, such as /dev/dri/renderD128. NVENC: a GPU index, such as 0. Blank uses the default.")
-				@numberField("quality", "Quality", v.Config.Quality, "HEVC quality target, 1-51 (lower is better quality and a larger file). Around 21-26 is a good range.")
-				@numberField("minVmaf", "Minimum VMAF", v.Config.MinVMAF, "Keep the original when the transcode scores below this against it (0-100, about 94 is visually clean). 0 disables the check.")
-				@numberField("vmafSamples", "VMAF samples", v.Config.VMAFSamples, "Number of 20 second segments compared per file. More is more thorough but slower.")
-				@numberField("workers", "Workers", v.Config.Workers, "Simultaneous transcodes.")
-				@textField("workDir", "Work directory", v.Config.WorkDir, "Where transcodes are written before replacing the original.")
-			</fieldset>
-			<fieldset>
-				<legend>System</legend>
-				@textField("listenAddr", "Listen address", v.Config.ListenAddr, "The web UI has no authentication; keep it on a trusted network. Takes effect after a restart.")
-				<div class="field">
-					<label for="logLevel">Log level</label>
-					<select id="logLevel" name="logLevel">
-						for _, l := range []string{"debug", "info", "warn", "error"} {
-							<option value={ l } selected?={ l == v.Config.LogLevel }>{ l }</option>
-						}
-					</select>
-				</div>
-				<div class="field">
-					<label for="dbPath">Database path</label>
-					<input id="dbPath" name="dbPath" type="text" value={ v.Config.DBPath } spellcheck="false"/>
-					<span class="hint">Takes effect after a restart.</span>
-				</div>
-			</fieldset>
-			<div class="actions">
-				<button class="button" type="submit">Save</button>
-			</div>
-		</form>
+			</form>
+		</div>
 	}
 }

@@ -28,6 +28,7 @@ type Web struct {
 type Store interface {
 	controllers.Store
 	controllers.HistoryStore
+	controllers.SettingsStore
 }
 
 // NewWeb builds the web interface with its library, activity, settings and services controllers.
@@ -35,7 +36,7 @@ func NewWeb(db Store, pool *pool.Pool, settings *config.Store, runtime controlle
 	return &Web{controllers: []Controller{
 		controllers.NewLibraryController(db, pool),
 		controllers.NewActivityController(db, pool),
-		controllers.NewSettingsController(settings, runtime),
+		controllers.NewSettingsController(settings, runtime, db, pool),
 		controllers.NewServicesController(settings),
 	}}
 }
