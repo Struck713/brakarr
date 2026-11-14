@@ -22,11 +22,11 @@ type PathMap struct {
 
 // Notifier batches replaced files and asks the arr apps to rescan them.
 type Notifier struct {
-	apps   []App
-	maps   []PathMap
 	client *http.Client
 
 	mu      sync.Mutex
+	apps    []App
+	maps    []PathMap
 	pending map[string]struct{}
 }
 
@@ -34,6 +34,14 @@ type Notifier struct {
 func NewNotifier(apps []App, maps []PathMap) *Notifier {
 	return &Notifier{apps: apps, maps: maps,
 		client: &http.Client{Timeout: 30 * time.Second}, pending: map[string]struct{}{}}
+}
+
+// SetApps replaces the apps and path maps. Paths already queued are sent to the new apps on
+// the next flush.
+func (n *Notifier) SetApps(apps []App, maps []PathMap) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.apps, n.maps = apps, maps
 }
 
 // Replaced queues a replaced file's path to be reported on the next flush.
@@ -60,13 +68,13 @@ func (n *Notifier) Run(ctx context.Context) {
 // flush notifies every app about the queued paths and clears the queue.
 func (n *Notifier) flush(ctx context.Context) {
 	n.mu.Lock()
-	paths := n.pending
+	paths, apps := n.pending, n.apps
 	n.pending = map[string]struct{}{}
 	n.mu.Unlock()
 	if len(paths) == 0 {
 		return
 	}
-	for _, app := range n.apps {
+	for _, app := range apps {
 		if err := n.notify(ctx, app, paths); err != nil {
 			slog.Warn("arr: notify failed", "app", app.Name, "error", err)
 		}
@@ -135,6 +143,7 @@ func (n *Notifier) do(ctx context.Context, app App, method, path string, body, o
 
 // remote translates a local path to the path the apps see. A mapping only
 // applies on a path boundary, so /data/tv does not match /data/tvshows.
+// The caller must hold n.mu.
 func (n *Notifier) remote(path string) string {
 	for _, m := range n.maps {
 		if rest, ok := strings.CutPrefix(path, m.Local); ok && (rest == "" || rest[0] == '/') {

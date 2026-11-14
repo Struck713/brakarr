@@ -8,10 +8,12 @@ import (
 )
 
 type SettingsView struct {
-	Config config.Config
-	Path   string
-	Saved  bool
-	Errors []string
+	Config   config.Config
+	Path     string
+	Saved    bool
+	Errors   []string
+	Disabled []string // why transcoding is not running, empty when it is
+	Restart  []string // saved settings that only take effect after a restart
 }
 
 func joinExtensions(exts []string) string { return strings.Join(exts, ", ") }
@@ -20,7 +22,20 @@ templ SettingsPage(v SettingsView) {
 	@settingsLayout(tabGeneral) {
 		<form class="settings" method="post" action="/settings">
 			if v.Saved {
-				<div class="notice notice-success">Saved to <code>{ v.Path }</code>. Restart Brakarr for changes to take effect.</div>
+				<div class="notice notice-success">Saved to <code>{ v.Path }</code> and applied. Running transcodes finish with their previous settings.</div>
+			}
+			if len(v.Restart) > 0 {
+				<div class="notice notice-warning">Restart Brakarr to apply the new { strings.Join(v.Restart, " and ") }.</div>
+			}
+			if len(v.Disabled) > 0 {
+				<div class="notice notice-danger">
+					Transcoding is disabled until these are fixed:
+					<ul>
+						for _, e := range v.Disabled {
+							<li>{ e }</li>
+						}
+					</ul>
+				</div>
 			}
 			if len(v.Errors) > 0 {
 				<div class="notice notice-danger">
@@ -59,7 +74,7 @@ templ SettingsPage(v SettingsView) {
 			</fieldset>
 			<fieldset>
 				<legend>System</legend>
-				@textField("listenAddr", "Listen address", v.Config.ListenAddr, "The web UI has no authentication; keep it on a trusted network.")
+				@textField("listenAddr", "Listen address", v.Config.ListenAddr, "The web UI has no authentication; keep it on a trusted network. Takes effect after a restart.")
 				<div class="field">
 					<label for="logLevel">Log level</label>
 					<select id="logLevel" name="logLevel">
@@ -71,6 +86,7 @@ templ SettingsPage(v SettingsView) {
 				<div class="field">
 					<label for="dbPath">Database path</label>
 					<input id="dbPath" name="dbPath" type="text" value={ v.Config.DBPath } spellcheck="false"/>
+					<span class="hint">Takes effect after a restart.</span>
 				</div>
 			</fieldset>
 			<div class="actions">

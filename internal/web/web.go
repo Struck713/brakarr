@@ -31,11 +31,11 @@ type Store interface {
 }
 
 // NewWeb builds the web interface with its library, activity, settings and services controllers.
-func NewWeb(db Store, pool *pool.Pool, settings *config.Store) *Web {
+func NewWeb(db Store, pool *pool.Pool, settings *config.Store, runtime controllers.Runtime) *Web {
 	return &Web{controllers: []Controller{
 		controllers.NewLibraryController(db, pool),
 		controllers.NewActivityController(db, pool),
-		controllers.NewSettingsController(settings),
+		controllers.NewSettingsController(settings, runtime),
 		controllers.NewServicesController(settings),
 	}}
 }
