@@ -1,5 +1,7 @@
 package media
 
+import "strings"
+
 // Status is the processing state of a media file.
 type Status string
 
@@ -23,8 +25,12 @@ const (
 )
 
 // Requeueable reports whether a file in this state can go back to the queue: failed files, and
-// files skipped after a transcode that other settings might make worth keeping.
-func Requeueable(status Status, kind SkipKind) bool {
+// files skipped after a transcode that other settings might make worth keeping. Files already
+// in HEVC never are. Keep in sync with the requeueable filter in internal/database.
+func Requeueable(status Status, kind SkipKind, format string) bool {
+	if strings.EqualFold(format, "HEVC") {
+		return false
+	}
 	switch status {
 	case StatusFailed:
 		return true

@@ -307,7 +307,7 @@ func (d *Database) ListHistory(ctx context.Context, limit, offset int) ([]media.
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT h.id, h.files_hash, f.name, f.path, h.status, h.reason,
 		       h.source_size, h.output_size, h.vmaf, h.created_at, h.finished_at,
-		       f.status, f.skip_kind
+		       f.status, f.skip_kind, f.format
 		FROM history h
 		JOIN files f ON f.hash = h.files_hash
 		ORDER BY h.id DESC
@@ -322,7 +322,7 @@ func (d *Database) ListHistory(ctx context.Context, limit, offset int) ([]media.
 		var h media.History
 		err := rows.Scan(&h.ID, &h.Hash, &h.Name, &h.Path, &h.Status, &h.Reason,
 			&h.SourceSize, &h.OutputSize, &h.VMAF, &h.CreatedAt, &h.FinishedAt,
-			&h.FileStatus, &h.FileSkipKind)
+			&h.FileStatus, &h.FileSkipKind, &h.FileFormat)
 		if err != nil {
 			return nil, err
 		}

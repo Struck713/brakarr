@@ -27,7 +27,7 @@ type Media struct {
 }
 
 // Requeueable reports whether the file can go back to the queue.
-func (m *Media) Requeueable() bool { return Requeueable(m.Status, m.SkipKind) }
+func (m *Media) Requeueable() bool { return Requeueable(m.Status, m.SkipKind, m.Format) }
 
 // IsHEVC reports whether the file is already HEVC encoded.
 func (m *Media) IsHEVC() bool {
