@@ -17,7 +17,8 @@ type History struct {
 	// The file's current state, which may have changed since this job.
 	FileStatus   Status
 	FileSkipKind SkipKind
+	FileFormat   string
 }
 
 // Requeueable reports whether the job's file can go back to the queue now.
-func (h *History) Requeueable() bool { return Requeueable(h.FileStatus, h.FileSkipKind) }
+func (h *History) Requeueable() bool { return Requeueable(h.FileStatus, h.FileSkipKind, h.FileFormat) }
