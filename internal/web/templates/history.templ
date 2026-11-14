@@ -20,6 +20,10 @@ func historyPanelURL(page int) string {
 	return fmt.Sprintf("/history?page=%d", page)
 }
 
+func historyRequeueURL(hash []byte, page int) string {
+	return fmt.Sprintf("/history/%s/requeue?page=%d", hex.EncodeToString(hash), page)
+}
+
 // sizeChange describes the output size relative to the source, e.g. "-42.0%".
 func sizeChange(source int64, output *int64) string {
 	if output == nil || source <= 0 {
@@ -49,13 +53,13 @@ templ HistoryPanel(list HistoryList) {
 		if list.Total == 0 {
 			<div class="empty">No finished transcodes yet.</div>
 		} else {
-			@historyTable(list.Items)
+			@historyTable(list.Items, list.Page)
 			@pager(list.Page, list.Pages, "Total jobs: "+fmt.Sprint(list.Total), historyPanelURL, "#history-panel")
 		}
 	</div>
 }
 
-templ historyTable(items []media.History) {
+templ historyTable(items []media.History, page int) {
 	<div class="table-wrap">
 		<table class="table">
 			<thead>
@@ -69,6 +73,7 @@ templ historyTable(items []media.History) {
 					<th scope="col">VMAF</th>
 					<th scope="col">Finished</th>
 					<th scope="col">Hash</th>
+					<th scope="col" class="col-end"><span class="sr-only">Actions</span></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -90,6 +95,20 @@ templ historyTable(items []media.History) {
 						<td>{ formatVMAF(h.VMAF) }</td>
 						<td>{ formatFinished(h) }</td>
 						<td><code title={ hex.EncodeToString(h.Hash) }>{ shortHash(h.Hash) }</code></td>
+						<td class="col-end">
+							if h.Requeueable() {
+								<button
+									class="icon-button"
+									title="Requeue"
+									aria-label={ "Requeue " + h.Name }
+									hx-post={ historyRequeueURL(h.Hash, page) }
+									hx-target="#history-panel"
+									hx-swap="outerHTML"
+								>
+									@icon("retry")
+								</button>
+							}
+						</td>
 					</tr>
 				}
 			</tbody>

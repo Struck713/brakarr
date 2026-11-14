@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Struck713/brakarr/internal/config"
+	"github.com/Struck713/brakarr/internal/pool"
 	"github.com/Struck713/brakarr/internal/web/templates"
 	"github.com/labstack/echo/v5"
 )
@@ -20,35 +22,74 @@ type Runtime interface {
 	NeedsRestart() []string
 }
 
+// SettingsStore is the persistence the settings page uses to requeue files skipped for low
+// quality that pass the current minimum VMAF.
+type SettingsStore interface {
+	CountPassingQualitySkips(ctx context.Context, minVMAF float64) (int, error)
+	RequeuePassingQualitySkips(ctx context.Context, minVMAF float64) (int, error)
+}
+
 // SettingsController serves the settings page and persists changes.
 type SettingsController struct {
 	settings *config.Store
 	runtime  Runtime
+	db       SettingsStore
+	pool     *pool.Pool
 }
 
 // NewSettingsController creates a SettingsController backed by the config store.
-func NewSettingsController(settings *config.Store, runtime Runtime) *SettingsController {
-	return &SettingsController{settings: settings, runtime: runtime}
+func NewSettingsController(settings *config.Store, runtime Runtime, db SettingsStore, pool *pool.Pool) *SettingsController {
+	return &SettingsController{settings: settings, runtime: runtime, db: db, pool: pool}
 }
 
 // view builds the settings page view for cfg with the current runtime state.
-func (s *SettingsController) view(cfg config.Config) templates.SettingsView {
-	v := templates.SettingsView{Config: cfg, Path: s.settings.Path(), Restart: s.runtime.NeedsRestart()}
+func (s *SettingsController) view(ctx context.Context, cfg config.Config) (templates.SettingsView, error) {
+	saved := s.settings.Get()
+	v := templates.SettingsView{Config: cfg, Path: s.settings.Path(), Restart: s.runtime.NeedsRestart(),
+		MinVMAF: saved.MinVMAF}
 	if err := s.runtime.Disabled(); err != nil {
 		v.Disabled = splitErrors(err)
 	}
-	return v
+	n, err := s.db.CountPassingQualitySkips(ctx, float64(saved.MinVMAF))
+	if err != nil {
+		return v, err
+	}
+	v.PassingSkips = n
+	return v, nil
 }
 
 // Register adds the settings routes to the router.
 func (s *SettingsController) Register(e *echo.Echo) {
 	e.GET("/settings", s.Show)
 	e.POST("/settings", s.Save)
+	e.POST("/settings/requeue-quality", s.RequeueQuality)
 }
 
 // Show renders the settings page with the current configuration.
 func (s *SettingsController) Show(c *echo.Context) error {
-	return Render(c, http.StatusOK, templates.SettingsPage(s.view(s.settings.Get())))
+	view, err := s.view(c.Request().Context(), s.settings.Get())
+	if err != nil {
+		return err
+	}
+	return Render(c, http.StatusOK, templates.SettingsPage(view))
+}
+
+// RequeueQuality requeues the files skipped for low quality that pass the current minimum VMAF.
+func (s *SettingsController) RequeueQuality(c *echo.Context) error {
+	ctx := c.Request().Context()
+	n, err := s.db.RequeuePassingQualitySkips(ctx, float64(s.settings.Get().MinVMAF))
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		s.pool.Notify()
+	}
+	view, err := s.view(ctx, s.settings.Get())
+	if err != nil {
+		return err
+	}
+	view.Requeued = n
+	return Render(c, http.StatusOK, templates.SettingsPage(view))
 }
 
 // Save validates the submitted form and writes the new configuration.
@@ -58,7 +99,10 @@ func (s *SettingsController) Save(c *echo.Context) error {
 		err = s.settings.Save(cfg)
 	}
 	status := http.StatusOK
-	view := s.view(cfg)
+	view, viewErr := s.view(c.Request().Context(), cfg)
+	if viewErr != nil {
+		return viewErr
+	}
 	if err != nil {
 		status = http.StatusUnprocessableEntity
 		view.Errors = splitErrors(err)

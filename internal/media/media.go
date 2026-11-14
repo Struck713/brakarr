@@ -22,8 +22,12 @@ type Media struct {
 	Size      int64 // bytes
 	CreatedAt int64 // unix seconds
 	Status    Status
-	Error     string // last failure reason, if any
+	SkipKind  SkipKind // why it was skipped, when Status is skipped
+	Error     string   // last failure or skip reason, if any
 }
+
+// Requeueable reports whether the file can go back to the queue.
+func (m *Media) Requeueable() bool { return Requeueable(m.Status, m.SkipKind) }
 
 // IsHEVC reports whether the file is already HEVC encoded.
 func (m *Media) IsHEVC() bool {

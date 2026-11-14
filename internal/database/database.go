@@ -34,7 +34,7 @@ func Open(path string) (*Database, error) {
 // Close closes the underlying database.
 func (d *Database) Close() error { return d.db.Close() }
 
-const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, error"
+const columns = "hash, name, path, format, bit_depth, size, duration, created_at, status, skip_kind, error"
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -43,7 +43,7 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(s scanner) (*media.Media, error) {
 	m := &media.Media{}
 	err := s.Scan(&m.Hash, &m.Name, &m.Path, &m.Format, &m.BitDepth, &m.Size,
-		&m.Duration, &m.CreatedAt, &m.Status, &m.Error)
+		&m.Duration, &m.CreatedAt, &m.Status, &m.SkipKind, &m.Error)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +57,9 @@ func (d *Database) Insert(ctx context.Context, m *media.Media) (bool, error) {
 		status = media.StatusPending
 	}
 	res, err := d.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO files (hash, name, path, format, bit_depth, size, duration, status, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.Hash, m.Name, m.Path, m.Format, m.BitDepth, m.Size, m.Duration, status, m.Error)
+		INSERT OR IGNORE INTO files (hash, name, path, format, bit_depth, size, duration, status, skip_kind, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.Hash, m.Name, m.Path, m.Format, m.BitDepth, m.Size, m.Duration, status, m.SkipKind, m.Error)
 	if err != nil {
 		return false, err
 	}
@@ -80,7 +80,7 @@ func (d *Database) Get(ctx context.Context, hash []byte) (*media.Media, error) {
 func (d *Database) ClaimNext(ctx context.Context) (*media.Media, error) {
 	m, err := scan(d.db.QueryRowContext(ctx, `
 		UPDATE files
-		SET status = 'running', error = ''
+		SET status = 'running', skip_kind = '', error = ''
 		WHERE hash = (SELECT hash FROM files WHERE status = 'pending' ORDER BY created_at, name LIMIT 1)
 		RETURNING `+columns))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -134,14 +134,15 @@ func (d *Database) Fail(ctx context.Context, hash []byte, reason string) error {
 
 // Skip marks the media as skipped after a transcode whose output was discarded, and records
 // the output's size and VMAF score (nil if not measured) in the history.
-func (d *Database) Skip(ctx context.Context, hash []byte, reason string, outputSize int64, vmaf *float64) error {
+func (d *Database) Skip(ctx context.Context, hash []byte, kind media.SkipKind, reason string, outputSize int64, vmaf *float64) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'skipped', error = ? WHERE hash = ?`, reason, hash); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE files SET status = 'skipped', skip_kind = ?, error = ? WHERE hash = ?`,
+		kind, reason, hash); err != nil {
 		return err
 	}
 	if err := recordHistory(ctx, tx, hash, media.StatusSkipped, reason, &outputSize, vmaf); err != nil {
@@ -187,15 +188,50 @@ func (d *Database) Release(ctx context.Context, hash []byte) error {
 	return err
 }
 
-// Retry returns a failed item to pending, reporting whether it changed.
-func (d *Database) Retry(ctx context.Context, hash []byte) (bool, error) {
-	res, err := d.db.ExecContext(ctx,
-		`UPDATE files SET status = 'pending', error = '' WHERE hash = ? AND status = 'failed'`, hash)
+// requeueable matches files that may go back to the queue: failed ones, and ones skipped after
+// a transcode that other settings might make worth keeping. Already-HEVC files never match.
+// Keep in sync with media.Requeueable.
+const requeueable = `(status = 'failed' OR (status = 'skipped' AND skip_kind IN ('quality', 'not_smaller')))
+	AND lower(format) <> 'hevc'`
+
+// Requeue returns a failed or retryable skipped item to pending, reporting whether it changed.
+func (d *Database) Requeue(ctx context.Context, hash []byte) (bool, error) {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE files SET status = 'pending', skip_kind = '', error = ''
+		WHERE hash = ? AND `+requeueable, hash)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// passingQualitySkips selects files skipped for low quality whose last transcode scored at
+// least the bound minimum VMAF. A minimum of 0 means the check is off, so all of them pass.
+const passingQualitySkips = `
+	SELECT f.hash FROM files f
+	JOIN history h ON h.id = (SELECT MAX(id) FROM history WHERE files_hash = f.hash)
+	WHERE f.status = 'skipped' AND f.skip_kind = 'quality' AND lower(f.format) <> 'hevc'
+	  AND h.status = 'skipped' AND (?1 <= 0 OR h.vmaf >= ?1)`
+
+// CountPassingQualitySkips counts the files skipped for low quality that would pass minVMAF.
+func (d *Database) CountPassingQualitySkips(ctx context.Context, minVMAF float64) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+passingQualitySkips+`)`, minVMAF).Scan(&n)
+	return n, err
+}
+
+// RequeuePassingQualitySkips returns the files skipped for low quality that would pass minVMAF
+// to the queue, reporting how many were requeued.
+func (d *Database) RequeuePassingQualitySkips(ctx context.Context, minVMAF float64) (int, error) {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE files SET status = 'pending', skip_kind = '', error = ''
+		WHERE hash IN (`+passingQualitySkips+`)`, minVMAF)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // RequeueRunning resets items left running by a previous run back to pending.
@@ -270,7 +306,8 @@ func (d *Database) CountHistory(ctx context.Context) (int, error) {
 func (d *Database) ListHistory(ctx context.Context, limit, offset int) ([]media.History, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT h.id, h.files_hash, f.name, f.path, h.status, h.reason,
-		       h.source_size, h.output_size, h.vmaf, h.created_at, h.finished_at
+		       h.source_size, h.output_size, h.vmaf, h.created_at, h.finished_at,
+		       f.status, f.skip_kind
 		FROM history h
 		JOIN files f ON f.hash = h.files_hash
 		ORDER BY h.id DESC
@@ -284,7 +321,8 @@ func (d *Database) ListHistory(ctx context.Context, limit, offset int) ([]media.
 	for rows.Next() {
 		var h media.History
 		err := rows.Scan(&h.ID, &h.Hash, &h.Name, &h.Path, &h.Status, &h.Reason,
-			&h.SourceSize, &h.OutputSize, &h.VMAF, &h.CreatedAt, &h.FinishedAt)
+			&h.SourceSize, &h.OutputSize, &h.VMAF, &h.CreatedAt, &h.FinishedAt,
+			&h.FileStatus, &h.FileSkipKind)
 		if err != nil {
 			return nil, err
 		}

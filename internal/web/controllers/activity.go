@@ -12,10 +12,11 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// HistoryStore is the persistence the activity history tab reads from.
+// HistoryStore is the persistence the activity history tab reads from and updates.
 type HistoryStore interface {
 	ListHistory(ctx context.Context, limit, offset int) ([]media.History, error)
 	CountHistory(ctx context.Context) (int, error)
+	Requeue(ctx context.Context, hash []byte) (bool, error)
 }
 
 // ActivityController serves the activity pages: active transcode jobs and the job history.
@@ -35,6 +36,7 @@ func (a *ActivityController) Register(e *echo.Echo) {
 	e.GET("/activity/history", a.History)
 	e.GET("/jobs", a.Jobs)
 	e.GET("/history", a.HistoryPanel)
+	e.POST("/history/:hash/requeue", a.Requeue)
 }
 
 // Index renders the full activity page.
@@ -63,6 +65,14 @@ func (a *ActivityController) HistoryPanel(c *echo.Context) error {
 		return err
 	}
 	return Render(c, http.StatusOK, templates.HistoryPanel(list))
+}
+
+// Requeue returns a job's file to the queue and re-renders the history panel.
+func (a *ActivityController) Requeue(c *echo.Context) error {
+	if err := requeue(c, a.db, a.pool); err != nil {
+		return err
+	}
+	return a.HistoryPanel(c)
 }
 
 // history loads one page of job history for display.

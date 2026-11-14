@@ -157,7 +157,7 @@ func (c *Crawler) handle(ctx context.Context, path string, d fs.DirEntry) (bool,
 	case err != nil:
 		return false, err
 	case m.IsHEVC():
-		m.Status, m.Error = media.StatusSkipped, "already HEVC"
+		m.Status, m.SkipKind, m.Error = media.StatusSkipped, media.SkipHEVC, "already HEVC"
 	}
 
 	inserted, err := c.store.Insert(ctx, m)
